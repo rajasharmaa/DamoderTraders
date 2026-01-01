@@ -1,18 +1,33 @@
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react-swc";
-import path from "path";
-import { componentTagger } from "lovable-tagger";
+// vite.config.js
+import { defineConfig } from 'vite'
 
-// https://vitejs.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   server: {
-    host: "::",
-    port: 8080,
+    host: true, // Listen on all addresses
+    port: 5173, // or any port you're using
+    allowedHosts: [
+      'damodertraders-z8yc.onrender.com',
+      'localhost',
+      '127.0.0.1'
+    ]
   },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
-  },
-}));
+  // If you have a backend API, add proxy configuration:
+  server: {
+    host: true,
+    port: 5173,
+    allowedHosts: [
+      'damodertraders-z8yc.onrender.com',
+      'localhost',
+      '127.0.0.1'
+    ],
+    proxy: {
+      // If your API requests start with /api, proxy them
+      '/api': {
+        target: 'https://damodertraders-z8yc.onrender.com',
+        changeOrigin: true,
+        secure: false, // Set to true if your backend has valid SSL
+        rewrite: (path) => path.replace(/^\/api/, '')
+      }
+    }
+  }
+})
