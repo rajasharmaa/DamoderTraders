@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: damodar-traders
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run preview
+    publishDir: dist
+    envVars:
+      - key: NODE_VERSION
+        value: 18.17.0
+    healthCheckPath: /
+    autoDeploy: true
