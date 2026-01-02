@@ -63,7 +63,7 @@ export async function apiRequest(
   }
 
   const defaultOptions: RequestInit = {
-    credentials: 'include',
+    credentials: 'include', // IMPORTANT for cookies
     headers: {
       'Content-Type': 'application/json',
       ...fetchOptions.headers,
