@@ -1,4 +1,4 @@
-// context/AuthContext.tsx - Updated version
+// context/AuthContext.tsx - Complete Fixed Version
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { api } from '@/lib/api';
 
@@ -13,10 +13,10 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (data: { name: string; email: string; password: string; phone?: string }) => Promise<void>;
+  login: (email: string, password: string) => Promise<{ message: string; user: any }>;
+  register: (data: { name: string; email: string; password: string; phone?: string }) => Promise<{ message: string; user: any }>;
   logout: () => Promise<void>;
-  checkAuth: () => Promise<void>;
+  checkAuth: () => Promise<boolean>;
   checkEmailExists: (email: string) => Promise<boolean>;
 }
 
@@ -26,58 +26,90 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const checkAuth = async () => {
+  const checkAuth = async (): Promise<boolean> => {
     try {
       console.log('🔍 Checking authentication status...');
       console.log('API Base URL:', import.meta.env.VITE_API_URL);
+      console.log('Current origin:', window.location.origin);
       
-      // First test connection
-      const testResult = await api.test();
-      console.log('Test connection:', testResult);
+      // First test the connection
+      try {
+        const testResult = await api.test();
+        console.log('Connection test:', testResult);
+      } catch (testError) {
+        console.warn('Connection test failed:', testError);
+      }
       
+      // Check auth status
       const data = await api.auth.status();
       console.log('Auth status response:', data);
       
       if (data?.authenticated && data.user) {
         console.log('✅ User authenticated:', data.user);
         setUser(data.user);
+        return true;
       } else {
         console.log('❌ No authenticated user');
         setUser(null);
+        return false;
       }
     } catch (error: any) {
       console.error('Auth check failed:', error);
       
-      // Check if it's a CORS error
       if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-        console.error('CORS/Network error detected. Check server configuration.');
+        console.error('Network/CORS error. Check server configuration.');
       }
       
       setUser(null);
-    } finally {
-      setIsLoading(false);
+      return false;
     }
   };
 
   useEffect(() => {
-    checkAuth();
+    const initializeAuth = async () => {
+      await checkAuth();
+      setIsLoading(false);
+    };
+    
+    initializeAuth();
   }, []);
 
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
       console.log('🔐 Attempting login for:', email);
+      console.log('Cookies before login:', document.cookie);
+      
       const response = await api.auth.login({ email, password });
-      console.log('Login response:', response);
+      console.log('Login API response:', response);
+      console.log('Cookies after API call:', document.cookie);
       
-      // Re-check auth status after successful login
-      await checkAuth();
+      // Wait a moment for cookies to be processed
+      await new Promise(resolve => setTimeout(resolve, 100));
       
+      // Verify the session was established
+      const isAuthenticated = await checkAuth();
+      
+      if (!isAuthenticated) {
+        console.error('❌ Login API succeeded but session not established');
+        console.error('Current cookies:', document.cookie);
+        
+        // Try debug endpoint to see what's happening
+        try {
+          const debug = await api.debug.cookies();
+          console.error('Debug cookie info:', debug);
+        } catch (debugError) {
+          console.error('Debug endpoint failed:', debugError);
+        }
+        
+        throw new Error('Login succeeded but session could not be established. Please try clearing cookies and logging in again.');
+      }
+      
+      console.log('✅ Login and session established successfully');
       return response;
     } catch (error: any) {
       console.error('Login error:', error);
       
-      // Provide user-friendly error messages
       let errorMessage = 'Login failed. Please try again.';
       
       if (error.message === 'ACCOUNT_NOT_FOUND') {
@@ -90,6 +122,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         errorMessage = 'Connection timeout. Please check your internet connection.';
       } else if (error.message.includes('Failed to fetch')) {
         errorMessage = 'Cannot connect to server. Please try again later.';
+      } else if (error.message.includes('session could not be established')) {
+        errorMessage = 'Login succeeded but session could not be established. This may be a cookie issue. Try: 1) Clear cookies for this site 2) Use a private/incognito window 3) Check if cookies are enabled';
       }
       
       throw new Error(errorMessage);
@@ -113,9 +147,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       console.log('📝 Registering user:', data.email);
       const response = await api.auth.register(data);
-      console.log('Registration response:', response);
+      console.log('Registration API response:', response);
       
-      await checkAuth();
+      // Wait for session to be established
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Verify registration created a session
+      const isAuthenticated = await checkAuth();
+      
+      if (!isAuthenticated) {
+        console.warn('Registration succeeded but session not established');
+        // Still return success since user was created
+      }
       
       return response;
     } catch (error: any) {
@@ -140,22 +183,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     try {
       console.log('🚪 Logging out...');
+      console.log('Cookies before logout:', document.cookie);
+      
       await api.auth.logout();
+      
+      // Clear local state
       setUser(null);
+      
+      // Clear API cache
+      api.utils.clearCache();
+      
+      // Wait for cookies to be cleared
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
       console.log('✅ Logout successful');
+      console.log('Cookies after logout:', document.cookie);
     } catch (error: any) {
       console.error('Logout error:', error);
       // Even if logout fails, clear local state
       setUser(null);
+      api.utils.clearCache();
       throw error;
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Add user data to context value for debugging
+  // Debug: Log user state changes
   useEffect(() => {
-    console.log('👤 Current user state:', user);
+    console.log('👤 Auth Context - User state updated:', user);
   }, [user]);
 
   return (
