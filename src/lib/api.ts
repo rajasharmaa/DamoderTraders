@@ -1,5 +1,5 @@
 // lib/api.ts
-const API_BASE_URL = 'https://damodertraders.onrender.com/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://damodertraders.onrender.com/api';
 
 // Cache configuration
 const cache = new Map();
@@ -10,7 +10,6 @@ const EXTERNAL_APIS = {
   PRODUCTS: 'https://fakestoreapi.com/products',
   INDUSTRIAL_SUPPLIES: 'https://dummyjson.com/products/category',
   GEOCODING: 'https://api.opencagedata.com/geocode/v1/json',
-  // Add more external APIs as needed
 };
 
 interface CacheEntry {
@@ -45,6 +44,7 @@ export async function apiRequest(
   if (useCache) {
     const cached = cache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      console.log(`Cache hit for: ${cacheKey}`);
       return cached.data;
     }
   }
@@ -63,7 +63,7 @@ export async function apiRequest(
   }
 
   const defaultOptions: RequestInit = {
-    credentials: 'include', // IMPORTANT for cookies
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...fetchOptions.headers,
@@ -78,6 +78,8 @@ export async function apiRequest(
   
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
+      console.log(`Attempt ${attempt + 1}/${retries + 1} for: ${url}`);
+      
       const response = await fetch(url, {
         ...defaultOptions,
         ...fetchOptions,
@@ -100,7 +102,7 @@ export async function apiRequest(
       }
 
       if (response.status === 401) {
-        // Handle unauthorized - get error message from response
+        // Handle unauthorized
         let errorData;
         try {
           errorData = await response.json();
@@ -176,6 +178,7 @@ export async function apiRequest(
           data,
           timestamp: Date.now(),
         });
+        console.log(`Cached response for: ${cacheKey}`);
       }
 
       return data;
@@ -198,6 +201,7 @@ export async function apiRequest(
       // Exponential backoff for retries
       if (attempt < retries) {
         const delay = Math.pow(2, attempt) * 1000;
+        console.log(`Retrying in ${delay}ms...`);
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -271,7 +275,7 @@ export const externalApi = {
   // Get location data
   getLocation: async (latitude: number, longitude: number) => {
     try {
-      const apiKey = process.env.REACT_APP_GEOCODING_API_KEY;
+      const apiKey = import.meta.env.VITE_GEOCODING_API_KEY;
       if (!apiKey) {
         throw new Error('Geocoding API key not configured');
       }
@@ -286,21 +290,6 @@ export const externalApi = {
       return data;
     } catch (error) {
       console.warn('Failed to fetch location:', error);
-      return null;
-    }
-  },
-
-  // Get currency exchange rates
-  getExchangeRates: async (baseCurrency = 'INR') => {
-    try {
-      const data = await apiRequest('', {
-        useCache: true,
-        cacheKey: `exchange_rates_${baseCurrency}_${new Date().toISOString().split('T')[0]}`,
-      });
-      
-      return data;
-    } catch (error) {
-      console.warn('Failed to fetch exchange rates:', error);
       return null;
     }
   },
@@ -351,8 +340,9 @@ export const api = {
       method: 'POST',
       useCache: false,
     }),
-    status: () => apiRequest('/auth/status'),
-    // Add forgot password endpoints
+    status: () => apiRequest('/auth/status', {
+      useCache: false,
+    }),
     forgotPassword: (email: string) => apiRequest('/auth/forgot-password', {
       method: 'POST',
       body: JSON.stringify({ email }),
@@ -510,7 +500,7 @@ export const api = {
   // Utilities
   utils: apiUtils,
 
-  // Health check with external API fallback
+  // Health check
   health: async () => {
     try {
       const localHealth = await apiRequest('/health').catch(() => null);
@@ -543,6 +533,15 @@ export const api = {
         status: 'ERROR',
         timestamp: new Date().toISOString(),
       };
+    }
+  },
+
+  // Test connection
+  test: async () => {
+    try {
+      return await apiRequest('/test');
+    } catch {
+      return null;
     }
   },
 };
