@@ -10,7 +10,7 @@ const EXTERNAL_APIS = {
 
 // Cache configuration
 const cache = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 60 * 60 * 1000; // 5 minutes
 
 interface CacheEntry {
   data: any;
