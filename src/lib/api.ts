@@ -1,19 +1,19 @@
-// lib/api.ts - Complete Fixed Version
+// lib/api.ts - SECURED VERSION (FULLY CORRECTED)
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://damodertraders.onrender.com/api';
 
 // External APIs configuration
 const EXTERNAL_APIS = {
   PRODUCTS: 'https://fakestoreapi.com/products',
   INDUSTRIAL_SUPPLIES: 'https://dummyjson.com/products/category',
-  GEOCODING: 'https://api.opencagedata.com/geocode/v1/json',
-};
+} as const;
 
-// Cache configuration
-const cache = new Map();
-const CACHE_TTL = 60 * 60 * 1000; // 5 minutes
+// Cache configuration - consider upgrading to LRU cache for production
+const cache = new Map<string, CacheEntry<unknown>>();
+const CACHE_TTL = 5 * 60 * 1000;
+const MAX_CACHE_ENTRIES = 1000;
 
-interface CacheEntry {
-  data: any;
+interface CacheEntry<T = unknown> {
+  data: T;
   timestamp: number;
 }
 
@@ -24,7 +24,54 @@ interface RequestOptions extends RequestInit {
   externalApi?: keyof typeof EXTERNAL_APIS;
   externalEndpoint?: string;
   timeout?: number;
+  requiresAuth?: boolean;
 }
+
+// Rate limiting
+const requestQueue = new Map<string, Array<QueueItem>>();
+
+interface QueueItem<T = unknown> {
+  resolve: (value: T) => void;
+  reject: (reason?: any) => void;
+  requestFn: () => Promise<T>;
+}
+
+const REQUEST_DELAY = 100;
+
+class RateLimiter {
+  private requests: Map<string, number[]> = new Map();
+  private maxRequests: number;
+  private timeWindow: number;
+
+  constructor(maxRequests = 10, timeWindow = 60000) {
+    this.maxRequests = maxRequests;
+    this.timeWindow = timeWindow;
+  }
+
+  canMakeRequest(key: string): boolean {
+    const now = Date.now();
+    const userRequests = this.requests.get(key) || [];
+    
+    // Clean up old timestamps and filter recent ones
+    const recentRequests = userRequests.filter(time => now - time < this.timeWindow);
+    
+    // Clean up empty user entries to prevent memory growth
+    if (recentRequests.length === 0) {
+      this.requests.delete(key);
+      return true;
+    }
+    
+    if (recentRequests.length >= this.maxRequests) {
+      return false;
+    }
+    
+    recentRequests.push(now);
+    this.requests.set(key, recentRequests);
+    return true;
+  }
+}
+
+const apiRateLimiter = new RateLimiter(10, 60000);
 
 // Helper to get cookie value
 function getCookie(name: string): string | null {
@@ -35,84 +82,155 @@ function getCookie(name: string): string | null {
   return null;
 }
 
-// Helper to log cookie state
-function logCookies() {
-  if (typeof document !== 'undefined') {
-    console.log('Current cookies:', document.cookie);
+// CSRF token management
+let csrfToken: string | null = null;
+
+function getCsrfToken(): string | null {
+  if (!csrfToken) {
+    csrfToken = getCookie('XSRF-TOKEN') || getCookie('csrfToken');
+  }
+  return csrfToken;
+}
+
+function updateCsrfToken(token: string) {
+  csrfToken = token;
+}
+
+// Simple LRU-like cache cleanup
+function cleanupCache() {
+  if (cache.size > MAX_CACHE_ENTRIES) {
+    // Remove oldest entries when cache exceeds limit
+    const entries = Array.from(cache.entries());
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+    
+    const toRemove = entries.slice(0, Math.floor(MAX_CACHE_ENTRIES * 0.2));
+    toRemove.forEach(([key]) => cache.delete(key));
   }
 }
 
-export async function apiRequest(
+// Request queue
+async function queueRequest<T>(key: string, requestFn: () => Promise<T>): Promise<T> {
+  if (!requestQueue.has(key)) {
+    requestQueue.set(key, []);
+  }
+  
+  return new Promise<T>((resolve, reject) => {
+    const queue = requestQueue.get(key)!;
+    queue.push({ resolve, reject, requestFn });
+    
+    if (queue.length === 1) {
+      processQueue(key);
+    }
+  });
+}
+
+async function processQueue(key: string) {
+  const queue = requestQueue.get(key);
+  if (!queue || queue.length === 0) {
+    requestQueue.delete(key);
+    return;
+  }
+  
+  const { resolve, reject, requestFn } = queue[0];
+  
+  try {
+    const result = await requestFn();
+    resolve(result);
+  } catch (error) {
+    reject(error);
+  } finally {
+    queue.shift();
+    if (queue.length > 0) {
+      setTimeout(() => processQueue(key), REQUEST_DELAY);
+    } else {
+      requestQueue.delete(key);
+    }
+  }
+}
+
+export async function apiRequest<T = unknown>(
   endpoint: string, 
   options: RequestOptions = {}
-) {
+): Promise<T | null> {
   const {
     useCache = true,
-    cacheKey = endpoint,
-    retries = 3,
+    cacheKey,
+    retries = 2,
     externalApi,
     externalEndpoint,
-    timeout = 15000,
+    timeout = 10000,
+    requiresAuth = false,
     ...fetchOptions
   } = options;
 
-  // Check cache first (skip for auth endpoints)
-  if (useCache && !endpoint.includes('/auth/') && !endpoint.includes('/debug/')) {
-    const cached = cache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-      return cached.data;
-    }
-  }
+  // Get method properly, defaulting to GET
+  const method = (fetchOptions.method || 'GET').toUpperCase();
 
+  // Build URL first for cache key generation
   let url: string;
   
-  // Determine if using external API
   if (externalApi && EXTERNAL_APIS[externalApi]) {
-    if (externalEndpoint) {
-      url = `${EXTERNAL_APIS[externalApi]}${externalEndpoint}`;
-    } else {
-      url = EXTERNAL_APIS[externalApi];
-    }
+    url = externalEndpoint ? 
+      `${EXTERNAL_APIS[externalApi]}${externalEndpoint}` : 
+      EXTERNAL_APIS[externalApi];
   } else {
     url = `${API_BASE_URL}${endpoint}`;
   }
 
-  // Get current origin for CORS
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-  
+  // Generate robust cache key including URL and body
+  const effectiveCacheKey = cacheKey || 
+    `${method}_${url}_${JSON.stringify(fetchOptions.body || '')}`;
+
+  // Check rate limiting for non-GET requests
+  if (method !== 'GET') {
+    // Use session-based key for rate limiting
+    const userKey = getCookie('sessionId') || getCookie('userId') || 'anonymous';
+    if (!apiRateLimiter.canMakeRequest(userKey)) {
+      throw new Error('Rate limit exceeded. Please try again later.');
+    }
+  }
+
+  // Check cache (only for GET requests)
+  if (useCache && 
+      method === 'GET' && 
+      !endpoint.includes('/auth/') && 
+      !endpoint.includes('/user/') &&
+      !endpoint.includes('/debug/')) {
+    const cached = cache.get(effectiveCacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      return cached.data as T;
+    }
+  }
+
+  // Set credentials: 'include' for same-origin, 'omit' for external APIs
   const defaultOptions: RequestInit = {
-    credentials: 'include', // CRITICAL for cookies
+    credentials: externalApi ? 'omit' : 'include',
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'Origin': currentOrigin,
       ...fetchOptions.headers,
     },
   };
 
-  // Add CSRF token if available
-  const csrfToken = getCookie('XSRF-TOKEN') || getCookie('csrfToken');
-  if (csrfToken) {
-    (defaultOptions.headers as Record<string, string>)['X-CSRF-Token'] = csrfToken;
+  // Add CSRF token for state-changing operations (only for same-origin)
+  if (!externalApi && method !== 'GET') {
+    const token = getCsrfToken();
+    if (token) {
+      (defaultOptions.headers as Record<string, string>)['X-CSRF-Token'] = token;
+    }
   }
 
-  // Add timeout support
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-
-  let lastError: Error;
+  let lastError: Error | null = null;
   
   for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      // Log cookies for auth requests
-      if (endpoint.includes('/auth/')) {
-        console.log(`Auth request ${attempt + 1}/${retries + 1} for: ${endpoint}`);
-        logCookies();
-      }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
 
+    try {
       const response = await fetch(url, {
         ...defaultOptions,
         ...fetchOptions,
+        method,
         headers: {
           ...defaultOptions.headers,
           ...fetchOptions.headers,
@@ -122,49 +240,27 @@ export async function apiRequest(
 
       clearTimeout(timeoutId);
 
-      // Log response details for debugging auth issues
-      if (endpoint.includes('/auth/')) {
-        console.log(`Auth response for ${endpoint}:`, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: {
-            'set-cookie': response.headers.get('set-cookie'),
-            'content-type': response.headers.get('content-type'),
-          },
-          ok: response.ok,
-        });
-      }
-
-      // Handle specific status codes
-      if (response.status === 400) {
-        if (endpoint.includes('/products/discounted') || endpoint.includes('/products/popular')) {
-          return [];
-        }
-        return null;
-      }
-
+      // Handle authentication errors
       if (response.status === 401) {
-        let errorData;
-        try {
-          errorData = await response.json();
-        } catch {
-          errorData = { error: 'Authentication failed' };
-        }
+        apiUtils.clearAuthCache();
+        const errorData = await response.json().catch(() => ({}));
         
-        if (endpoint.includes('/auth/login')) {
-          const errorMessage = errorData.error || errorData.message || 'Invalid credentials';
-          if (errorMessage.includes('User not found') || 
-              errorMessage.includes('does not exist')) {
-            throw new Error('ACCOUNT_NOT_FOUND');
-          } else if (errorMessage.includes('Invalid password') || 
-                     errorMessage.includes('credentials')) {
-            throw new Error('INVALID_PASSWORD');
-          } else {
-            throw new Error('AUTHENTICATION_FAILED');
-          }
+        if (requiresAuth) {
+          throw new Error('LOGIN_REQUIRED');
+        } else if (endpoint.includes('/auth/login')) {
+          throw new Error('AUTHENTICATION_FAILED');
         } else {
           throw new Error('SESSION_EXPIRED');
         }
+      }
+
+      if (response.status === 400) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Bad request');
+      }
+
+      if (response.status === 403) {
+        throw new Error('FORBIDDEN');
       }
 
       if (response.status === 404) {
@@ -178,16 +274,12 @@ export async function apiRequest(
         continue;
       }
 
-      if (response.status === 500) {
-        console.error(`Server error 500 for endpoint: ${endpoint}`);
-        
-        if (endpoint.includes('/products') && !endpoint.match(/\/products\/[^\/]+$/)) {
-          return [];
+      if (response.status >= 500) {
+        if (attempt === retries) {
+          throw new Error('Server error. Please try again later.');
         }
-        if (endpoint.match(/\/products\/[^\/]+$/) && !endpoint.includes('/products/search')) {
-          return null;
-        }
-        throw new Error('Server error. Please try again later.');
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+        continue;
       }
 
       if (!response.ok) {
@@ -196,14 +288,13 @@ export async function apiRequest(
         try {
           errorData = JSON.parse(errorText);
         } catch {
-          errorData = { error: errorText || `HTTP ${response.status}` };
+          errorData = { error: `HTTP ${response.status}` };
         }
-        throw new Error(errorData.error || errorData.message || `HTTP ${response.status}: ${response.statusText}`);
+        throw new Error(errorData.error || errorData.message || `Request failed with status ${response.status}`);
       }
 
-      // Handle empty responses
       const contentType = response.headers.get('content-type');
-      let data;
+      let data: unknown;
       
       if (contentType && contentType.includes('application/json')) {
         data = await response.json();
@@ -211,32 +302,46 @@ export async function apiRequest(
         data = await response.text();
       }
 
-      // Cache the successful response (except for auth and debug endpoints)
-      if (useCache && !endpoint.includes('/auth/') && !endpoint.includes('/debug/')) {
-        cache.set(cacheKey, {
+      // Only update CSRF token from trusted (non-external) API responses
+      if (!externalApi && data && typeof data === 'object' && 'csrfToken' in data) {
+        updateCsrfToken((data as any).csrfToken);
+      }
+
+      // Cache successful GET responses
+      if (useCache && 
+          method === 'GET' && 
+          !endpoint.includes('/auth/') && 
+          !endpoint.includes('/user/') &&
+          !endpoint.includes('/debug/')) {
+        cache.set(effectiveCacheKey, {
           data,
           timestamp: Date.now(),
         });
+        cleanupCache();
       }
 
-      return data;
+      return data as T;
     } catch (error) {
-      lastError = error as Error;
       clearTimeout(timeoutId);
       
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new Error('Request timeout. Please try again.');
+      if (error instanceof Error) {
+        lastError = error;
+        
+        if (error.name === 'AbortError') {
+          lastError = new Error('Request timeout. Please check your connection.');
+        }
+        
+        // Re-throw auth errors immediately
+        if (error.message === 'AUTHENTICATION_FAILED' ||
+            error.message === 'SESSION_EXPIRED' ||
+            error.message === 'FORBIDDEN' ||
+            error.message === 'LOGIN_REQUIRED') {
+          throw error;
+        }
+      } else {
+        lastError = new Error('Unknown error occurred');
       }
       
-      // Don't retry on authentication errors
-      if (error.message === 'ACCOUNT_NOT_FOUND' || 
-          error.message === 'INVALID_PASSWORD' ||
-          error.message === 'AUTHENTICATION_FAILED' ||
-          error.message === 'SESSION_EXPIRED') {
-        throw error;
-      }
-      
-      // Exponential backoff for retries
       if (attempt < retries) {
         const delay = Math.pow(2, attempt) * 1000;
         await new Promise(resolve => setTimeout(resolve, delay));
@@ -244,22 +349,37 @@ export async function apiRequest(
     }
   }
 
-  console.error(`API request failed after ${retries} retries for endpoint:`, endpoint, lastError);
-  throw lastError;
+  throw lastError || new Error('Request failed after retries');
 }
 
-// External API specific functions
+// External API interfaces for better type safety
+interface ExternalProduct {
+  id: number;
+  title: string;
+  category: string;
+  image: string;
+  price: number;
+  description?: string;
+}
+
+interface IndustrialProduct {
+  id: number;
+  title: string;
+  category: string;
+  price: number;
+  thumbnail?: string;
+}
+
+// External API functions
 export const externalApi = {
-  getIndustrialProducts: async (category?: string, limit = 20) => {
+  getIndustrialProducts: async (category?: string, limit = 20): Promise<IndustrialProduct[]> => {
     try {
       let endpoint = '';
       if (category) {
         endpoint = `/${category}?limit=${limit}`;
-      } else {
-        endpoint = `?limit=${limit}`;
       }
       
-      const data = await apiRequest('', {
+      const data = await apiRequest<{ products: IndustrialProduct[] }>('', {
         externalApi: 'INDUSTRIAL_SUPPLIES',
         externalEndpoint: endpoint,
         useCache: true,
@@ -268,7 +388,7 @@ export const externalApi = {
       
       return data?.products || [];
     } catch (error) {
-      console.warn('Failed to fetch industrial products:', error);
+      console.error('Industrial supplies API failed:', error);
       return [];
     }
   },
@@ -277,7 +397,7 @@ export const externalApi = {
     try {
       if (!query || query.trim().length < 2) return [];
       
-      const data = await apiRequest('', {
+      const data = await apiRequest<ExternalProduct[]>('', {
         externalApi: 'PRODUCTS',
         useCache: true,
         cacheKey: `suggestions_${query}`,
@@ -285,13 +405,12 @@ export const externalApi = {
       
       const suggestions = Array.isArray(data) 
         ? data
-            .filter((product: any) => 
-              product.title.toLowerCase().includes(query.toLowerCase()) ||
-              product.description.toLowerCase().includes(query.toLowerCase())
+            .filter((product) => 
+              product.title.toLowerCase().includes(query.toLowerCase())
             )
             .slice(0, limit)
-            .map((product: any) => ({
-              id: product.id,
+            .map((product) => ({
+              id: product.id.toString(),
               name: product.title,
               category: product.category,
               image: product.image,
@@ -301,34 +420,13 @@ export const externalApi = {
       
       return suggestions;
     } catch (error) {
-      console.warn('Failed to fetch external suggestions:', error);
+      console.error('External suggestions API failed:', error);
       return [];
-    }
-  },
-
-  getLocation: async (latitude: number, longitude: number) => {
-    try {
-      const apiKey = import.meta.env.VITE_GEOCODING_API_KEY;
-      if (!apiKey) {
-        throw new Error('Geocoding API key not configured');
-      }
-      
-      const data = await apiRequest('', {
-        externalApi: 'GEOCODING',
-        externalEndpoint: `?q=${latitude}+${longitude}&key=${apiKey}&pretty=1`,
-        useCache: true,
-        cacheKey: `location_${latitude}_${longitude}`,
-      });
-      
-      return data;
-    } catch (error) {
-      console.warn('Failed to fetch location:', error);
-      return null;
     }
   },
 };
 
-// Cache management utilities
+// Cache management
 export const apiUtils = {
   clearCache: (key?: string) => {
     if (key) {
@@ -338,12 +436,22 @@ export const apiUtils = {
     }
   },
 
+  clearAuthCache: () => {
+    Array.from(cache.keys()).forEach(key => {
+      if (key.includes('user') || key.includes('inquiries') || key.includes('auth')) {
+        cache.delete(key);
+      }
+    });
+  },
+
   getCacheStats: () => {
+    const now = Date.now();
     return {
       size: cache.size,
-      entries: Array.from(cache.entries()).map(([key, value]) => ({
-        key,
-        age: Date.now() - value.timestamp,
+      entries: Array.from(cache.entries()).map(([key, entry]) => ({
+        key: key.substring(0, 50),
+        age: now - entry.timestamp,
+        expired: now - entry.timestamp > CACHE_TTL,
       })),
     };
   },
@@ -354,10 +462,16 @@ export const apiUtils = {
     );
     return Promise.all(promises);
   },
+
+  // Queue with more specific key generation
+  queueApiRequest: async <T>(endpoint: string, options: RequestOptions = {}): Promise<T | null> => {
+    const queueKey = `${endpoint}_${JSON.stringify(options.body || '')}_${options.method || 'GET'}`;
+    const requestFn = () => apiRequest<T>(endpoint, options);
+    return queueRequest(queueKey, requestFn);
+  },
 };
 
 export const api = {
-  // Auth endpoints
   auth: {
     register: (data: any) => apiRequest('/auth/register', {
       method: 'POST',
@@ -397,11 +511,10 @@ export const api = {
     }),
   },
 
-  // Product endpoints
   products: {
     getAll: async () => {
       try {
-        const localData = await apiRequest('/products').catch(() => null);
+        const localData = await apiRequest<any[]>('/products').catch(() => null);
         
         if (localData && Array.isArray(localData) && localData.length > 0) {
           return localData;
@@ -414,7 +527,7 @@ export const api = {
     },
     getByCategory: async (category: string) => {
       try {
-        const localData = await apiRequest(`/products/category/${category}`).catch(() => null);
+        const localData = await apiRequest<any[]>(`/products/category/${category}`).catch(() => null);
         
         if (localData && Array.isArray(localData) && localData.length > 0) {
           return localData;
@@ -440,7 +553,7 @@ export const api = {
         if (params.category) query.append('category', params.category);
         const queryString = query.toString();
         
-        const data = await apiRequest(`/products/search${queryString ? `?${queryString}` : ''}`);
+        const data = await apiRequest<any[]>(`/products/search${queryString ? `?${queryString}` : ''}`);
         
         if ((!data || data.length === 0) && params.search) {
           return await externalApi.getExternalSuggestions(params.search, 20);
@@ -455,7 +568,7 @@ export const api = {
       try {
         if (!query || query.trim().length < 2) return [];
         
-        const localSuggestions = await apiRequest(`/products/search/suggestions?query=${encodeURIComponent(query)}`)
+        const localSuggestions = await apiRequest<any[]>(`/products/search/suggestions?query=${encodeURIComponent(query)}`)
           .catch(() => []);
         
         if (localSuggestions && localSuggestions.length > 0) {
@@ -469,73 +582,65 @@ export const api = {
     },
     getDiscounted: async () => {
       try {
-        const data = await apiRequest('/products/discounted');
+        const data = await apiRequest<any[]>('/products/discounted');
         return data || [];
-      } catch (error) {
-        console.warn('Failed to fetch discounted products:', error);
+      } catch {
         return [];
       }
     },
     getPopular: async () => {
       try {
-        const data = await apiRequest('/products/popular');
+        const data = await apiRequest<any[]>('/products/popular');
         return data || [];
-      } catch (error) {
-        console.warn('Failed to fetch popular products:', error);
-        return [];
-      }
-    },
-  },
-
-  // Inquiry endpoints
-  inquiries: {
-    create: (data: any) => apiRequest('/inquiries', {
-      method: 'POST',
-      body: JSON.stringify(data),
-      useCache: false,
-    }),
-    getUserInquiries: async () => {
-      try {
-        return await apiRequest('/user/inquiries');
       } catch {
         return [];
       }
     },
   },
 
-  // User endpoints
+  inquiries: {
+    create: (data: any) => apiUtils.queueApiRequest('/inquiries', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      useCache: false,
+      requiresAuth: true,
+    }),
+    getUserInquiries: async () => {
+      try {
+        return await apiRequest<any[]>('/user/inquiries', {
+          requiresAuth: true,
+        });
+      } catch {
+        return [];
+      }
+    },
+  },
+
   users: {
     getProfile: async (id: string) => {
       try {
-        return await apiRequest(`/users/${id}`);
+        return await apiRequest(`/users/${id}`, {
+          requiresAuth: true,
+        });
       } catch {
         return null;
       }
     },
-    updateProfile: (id: string, data: any) => apiRequest(`/users/${id}`, {
+    updateProfile: (id: string, data: any) => apiUtils.queueApiRequest(`/users/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
       useCache: false,
+      requiresAuth: true,
     }),
   },
 
-  // Debug endpoints
-  debug: {
-    session: () => apiRequest('/debug/session', { useCache: false }),
-    cookies: () => apiRequest('/debug/cookies', { useCache: false }),
-    db: () => apiRequest('/debug/db', { useCache: false }),
-  },
-
-  // External APIs
   external: externalApi,
 
-  // Utilities
   utils: apiUtils,
 
-  // Health check
   health: async () => {
     try {
-      return await apiRequest('/health');
+      return await apiRequest<{ status: string; timestamp: string }>('/health');
     } catch {
       return {
         status: 'ERROR',
@@ -544,7 +649,6 @@ export const api = {
     }
   },
 
-  // Test connection
   test: async () => {
     try {
       return await apiRequest('/test');
@@ -554,17 +658,25 @@ export const api = {
   },
 };
 
-// Type definitions
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   data: T;
   status: number;
   headers: Headers;
 }
 
-export interface PaginatedResponse<T = any> {
+export interface PaginatedResponse<T = unknown> {
   data: T[];
   total: number;
   page: number;
   limit: number;
   totalPages: number;
+}
+
+// Optional: Export for debugging/monitoring
+if (typeof window !== 'undefined') {
+  (window as any).__API_DEBUG = {
+    cacheStats: () => apiUtils.getCacheStats(),
+    clearCache: apiUtils.clearCache,
+    rateLimiter: apiRateLimiter,
+  };
 }
