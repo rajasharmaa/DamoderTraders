@@ -1,6 +1,6 @@
 // components/TypewriterText.tsx
-import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
 
 interface TypewriterTextProps {
   texts: string[];
@@ -9,6 +9,7 @@ interface TypewriterTextProps {
   className?: string;
   cursorColor?: string;
   cursorBlinkSpeed?: number;
+  onComplete?: () => void;
 }
 
 const TypewriterText = ({ 
@@ -17,12 +18,28 @@ const TypewriterText = ({
   delay = 1000,
   className = '',
   cursorColor = 'text-blue-600',
-  cursorBlinkSpeed = 0.7
+  cursorBlinkSpeed = 0.7,
+  onComplete
 }: TypewriterTextProps) => {
   const [currentText, setCurrentText] = useState('');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  
+  const pauseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const nextLineTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (pauseTimeoutRef.current) {
+        clearTimeout(pauseTimeoutRef.current);
+      }
+      if (nextLineTimeoutRef.current) {
+        clearTimeout(nextLineTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (isPaused) return;
@@ -37,7 +54,7 @@ const TypewriterText = ({
         } else {
           // Pause at the end before deleting
           setIsPaused(true);
-          setTimeout(() => {
+          pauseTimeoutRef.current = setTimeout(() => {
             setIsPaused(false);
             setIsDeleting(true);
           }, delay);
@@ -49,33 +66,38 @@ const TypewriterText = ({
         } else {
           // Move to next word
           setIsDeleting(false);
-          setCurrentIndex((prev) => (prev + 1) % texts.length);
+          const nextIndex = (currentIndex + 1) % texts.length;
+          setCurrentIndex(nextIndex);
+          
+          // Check if we've completed all texts in current cycle
+          if (nextIndex === 0 && onComplete) {
+            onComplete();
+          }
+          
+          // Short pause before starting next word
           setIsPaused(true);
-          setTimeout(() => setIsPaused(false), 500);
+          pauseTimeoutRef.current = setTimeout(() => setIsPaused(false), 500);
         }
       }
     }, isDeleting ? speed / 2 : speed);
 
     return () => clearTimeout(timeout);
-  }, [currentText, currentIndex, isDeleting, isPaused, texts, speed, delay]);
+  }, [currentText, currentIndex, isDeleting, isPaused, texts, speed, delay, onComplete]);
 
   return (
     <div className={`relative inline-block ${className}`}>
       <span className="relative">
         {currentText}
-        <AnimatePresence mode="wait">
-          <motion.span
-            key="cursor"
-            className={`inline-block w-0.5 h-6 ml-1 ${cursorColor} align-middle`}
-            initial={{ opacity: 1 }}
-            animate={{ opacity: [1, 0, 1] }}
-            transition={{
-              duration: cursorBlinkSpeed,
-              repeat: Infinity,
-              ease: "linear"
-            }}
-          />
-        </AnimatePresence>
+        {/* Simplified cursor without AnimatePresence */}
+        <motion.span
+          className={`inline-block w-0.5 h-6 ml-1 ${cursorColor} align-middle`}
+          animate={{ opacity: [1, 0, 1] }}
+          transition={{
+            duration: cursorBlinkSpeed,
+            repeat: Infinity,
+            ease: "linear"
+          }}
+        />
         
         {/* Optional gradient overlay */}
         <span className="absolute -inset-2 bg-gradient-to-r from-transparent via-white/10 to-transparent blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
@@ -95,40 +117,210 @@ export const MultiLineTypewriter = ({
 }: { 
   lines: string[][];
   lineDelay?: number;
-} & Omit<TypewriterTextProps, 'texts'>) => {
+} & Omit<TypewriterTextProps, 'texts' | 'onComplete'>) => {
   const [activeLine, setActiveLine] = useState(0);
+  const [completedLines, setCompletedLines] = useState<number[]>([]);
+
+  const handleLineComplete = () => {
+    const current = activeLine;
+    setCompletedLines(prev => [...prev, current]);
+    
+    if (current < lines.length - 1) {
+      setTimeout(() => setActiveLine(current + 1), lineDelay);
+    }
+  };
 
   return (
     <div className="space-y-2">
       {lines.map((textGroup, index) => (
         <motion.div
           key={index}
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 10 }}
           animate={{ 
-            opacity: index === activeLine ? 1 : 0.3,
+            opacity: index === activeLine ? 1 : 
+                    completedLines.includes(index) ? 0.7 : 0.3,
             y: 0
           }}
           transition={{ duration: 0.5 }}
-          className="transition-opacity duration-300"
+          className="transition-all duration-300"
         >
-          <TypewriterText 
-            texts={textGroup} 
-            {...props}
-            onComplete={() => {
-              if (index < lines.length - 1) {
-                setTimeout(() => setActiveLine(index + 1), lineDelay);
-              }
-            }}
-          />
+          {index <= activeLine && (
+            <TypewriterText 
+              texts={textGroup} 
+              {...props}
+              onComplete={index === activeLine ? handleLineComplete : undefined}
+            />
+          )}
         </motion.div>
       ))}
     </div>
   );
 };
 
-// Add this to existing TypewriterText props interface
-interface TypewriterTextProps {
-  onComplete?: () => void;
-}
+// Hook-based version for maximum flexibility
+export const useTypewriter = (texts: string[], options?: {
+  speed?: number;
+  delay?: number;
+  loop?: boolean;
+  onTypingComplete?: () => void;
+  onCycleComplete?: () => void;
+}) => {
+  const {
+    speed = 50,
+    delay = 1000,
+    loop = true,
+    onTypingComplete,
+    onCycleComplete
+  } = options || {};
+
+  const [currentText, setCurrentText] = useState('');
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+
+  const pauseRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (isPaused || isHovered) return;
+
+    const timeout = setTimeout(() => {
+      const currentWord = texts[currentIndex];
+      
+      if (!isDeleting) {
+        if (currentText.length < currentWord.length) {
+          setCurrentText(currentWord.substring(0, currentText.length + 1));
+        } else {
+          setIsPaused(true);
+          onTypingComplete?.();
+          
+          pauseRef.current = setTimeout(() => {
+            setIsPaused(false);
+            setIsDeleting(true);
+          }, delay);
+        }
+      } else {
+        if (currentText.length > 0) {
+          setCurrentText(currentWord.substring(0, currentText.length - 1));
+        } else {
+          setIsDeleting(false);
+          const nextIndex = loop ? (currentIndex + 1) % texts.length : currentIndex + 1;
+          
+          if (nextIndex === 0 || nextIndex >= texts.length) {
+            onCycleComplete?.();
+          }
+          
+          if (nextIndex < texts.length) {
+            setCurrentIndex(nextIndex);
+            setIsPaused(true);
+            pauseRef.current = setTimeout(() => setIsPaused(false), 500);
+          }
+        }
+      }
+    }, isDeleting ? speed / 2 : speed);
+
+    return () => {
+      clearTimeout(timeout);
+      if (pauseRef.current) clearTimeout(pauseRef.current);
+    };
+  }, [
+    currentText, 
+    currentIndex, 
+    isDeleting, 
+    isPaused, 
+    isHovered,
+    texts, 
+    speed, 
+    delay, 
+    loop,
+    onTypingComplete,
+    onCycleComplete
+  ]);
+
+  const pause = () => setIsHovered(true);
+  const resume = () => setIsHovered(false);
+  const reset = () => {
+    setCurrentText('');
+    setCurrentIndex(0);
+    setIsDeleting(false);
+    setIsPaused(false);
+  };
+
+  return {
+    text: currentText,
+    currentIndex,
+    isTyping: !isDeleting && !isPaused,
+    isDeleting,
+    isPaused,
+    pause,
+    resume,
+    reset
+  };
+};
+
+// Enhanced Typewriter Component using the hook
+export const EnhancedTypewriterText = (props: TypewriterTextProps & {
+  onHoverPause?: boolean;
+  physicsCursor?: boolean;
+}) => {
+  const {
+    texts,
+    speed,
+    delay,
+    className,
+    cursorColor = 'text-blue-600',
+    cursorBlinkSpeed = 0.7,
+    onComplete,
+    onHoverPause = true,
+    physicsCursor = false
+  } = props;
+
+  const {
+    text,
+    isTyping,
+    pause,
+    resume
+  } = useTypewriter(texts, {
+    speed,
+    delay,
+    onCycleComplete: onComplete
+  });
+
+  return (
+    <div 
+      className={`relative inline-block ${className}`}
+      onMouseEnter={onHoverPause ? pause : undefined}
+      onMouseLeave={onHoverPause ? resume : undefined}
+    >
+      <span className="relative">
+        {text}
+        {physicsCursor ? (
+          <motion.span
+            className={`inline-block w-0.5 h-6 ml-1 ${cursorColor} align-middle`}
+            animate={{
+              opacity: [1, 0.7, 1],
+              scaleY: [1, 1.1, 1]
+            }}
+            transition={{
+              duration: cursorBlinkSpeed,
+              repeat: Infinity,
+              ease: "easeInOut"
+            }}
+          />
+        ) : (
+          <motion.span
+            className={`inline-block w-0.5 h-6 ml-1 ${cursorColor} align-middle`}
+            animate={{ opacity: [1, 0, 1] }}
+            transition={{
+              duration: cursorBlinkSpeed,
+              repeat: Infinity,
+              ease: "linear"
+            }}
+          />
+        )}
+      </span>
+    </div>
+  );
+};
 
 export default TypewriterText;

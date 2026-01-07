@@ -1,6 +1,6 @@
 // pages/Account.tsx
-import { useState, useEffect } from 'react';
-import { Helmet } from 'react-helmet';
+import { useState, useEffect, useCallback } from 'react';
+import { Helmet } from 'react-helmet-async'; // ✅ Updated import
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { User, MessageSquare, LogOut, ChevronRight, Calendar, FileText, Shield, Mail, Phone, UserCircle, Clock } from 'lucide-react';
@@ -25,49 +25,17 @@ const Account = () => {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('profile');
   const [inquiries, setInquiries] = useState<Inquiry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loadingInquiries, setLoadingInquiries] = useState(false);
+  const [inquiriesFetched, setInquiriesFetched] = useState(false);
 
-  useEffect(() => {
-    const fetchInquiries = async () => {
-      if (activeTab === 'inquiries' && user) {
-        try {
-          setIsLoading(true);
-          const data = await api.inquiries.getUserInquiries();
-          setInquiries(data || []);
-        } catch (error: any) {
-          toast({
-            title: 'Error',
-            description: 'Failed to load inquiries',
-            variant: 'destructive',
-          });
-        } finally {
-          setIsLoading(false);
-        }
-      }
-    };
+  // ✅ Safe user name extraction
+  const firstName = user?.name?.split(' ')?.[0] || 'User';
 
-    fetchInquiries();
-  }, [activeTab, user, toast]);
-
-  const handleLogout = async () => {
-    try {
-      await logout();
-      navigate('/');
-    } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.message || 'Failed to logout',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  if (!user) {
-    return null; // ProtectedRoute will handle redirection
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status.toLowerCase()) {
+  // ✅ Safe status color and icon helper functions
+  const getStatusColor = (status?: string) => {
+    const safeStatus = status?.toLowerCase?.() || 'default';
+    
+    switch (safeStatus) {
       case 'new':
         return 'bg-gradient-to-r from-yellow-500/20 to-yellow-600/10 text-yellow-700 border border-yellow-500/30';
       case 'responded':
@@ -79,8 +47,10 @@ const Account = () => {
     }
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status.toLowerCase()) {
+  const getStatusIcon = (status?: string) => {
+    const safeStatus = status?.toLowerCase?.() || 'default';
+    
+    switch (safeStatus) {
       case 'new':
         return <Clock className="w-4 h-4" />;
       case 'responded':
@@ -91,6 +61,75 @@ const Account = () => {
         return <FileText className="w-4 h-4" />;
     }
   };
+
+  // ✅ Fetch inquiries with caching
+  const fetchInquiries = useCallback(async () => {
+    if (activeTab === 'inquiries' && user && !inquiriesFetched) {
+      try {
+        setLoadingInquiries(true);
+        const data = await api.inquiries.getUserInquiries();
+        setInquiries(data || []);
+        setInquiriesFetched(true); // Cache the result
+      } catch (error: any) {
+        console.error('Failed to load inquiries:', error);
+        toast({
+          title: 'Error',
+          description: 'Failed to load inquiries',
+          variant: 'destructive',
+        });
+      } finally {
+        setLoadingInquiries(false);
+      }
+    }
+  }, [activeTab, user, inquiriesFetched, toast]); // ✅ toast wrapped in useCallback
+
+  useEffect(() => {
+    fetchInquiries();
+  }, [fetchInquiries]);
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/');
+    } catch (error: any) {
+      console.error('Logout error:', error);
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to logout',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleTabChange = (tabId: string) => {
+    setActiveTab(tabId);
+  };
+
+  // ✅ Better loading state for non-authenticated users
+  if (!user) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <Navbar />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent mb-4" />
+          <p className="text-muted-foreground ml-4">Loading account...</p>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
+
+  const profileItems = [
+    { label: 'Full Name', value: user.name, icon: UserCircle, color: 'text-blue-500' },
+    { label: 'Email Address', value: user.email, icon: Mail, color: 'text-red-500' },
+    { label: 'Phone Number', value: user.phone || 'Not provided', icon: Phone, color: 'text-green-500' },
+    { label: 'Account Role', value: user.role, icon: Shield, color: 'text-purple-500' },
+  ];
+
+  const navigationTabs = [
+    { id: 'profile', label: 'Profile Details', icon: User, description: 'View account information' },
+    { id: 'inquiries', label: 'My Inquiries', icon: MessageSquare, description: 'Track your requests' },
+  ];
 
   return (
     <>
@@ -111,14 +150,16 @@ const Account = () => {
           transition={{ duration: 0.5 }}
         >
           <div>
-            <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2">Welcome back, {user.name.split(' ')[0]}!</h1>
+            <h1 className="text-3xl md:text-4xl font-bold text-foreground mb-2">
+              Welcome back, {firstName}! {/* ✅ Safe name access */}
+            </h1>
             <p className="text-muted-foreground">Manage your account and track your inquiries</p>
           </div>
           
           <motion.button
             onClick={handleLogout}
-            className="group flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-destructive to-destructive/90 text-destructive-foreground rounded-xl hover:from-destructive/90 hover:to-destructive transition-all duration-300 shadow-lg hover:shadow-xl hover:scale-[1.02]"
-            whileHover={{ scale: 1.05 }}
+            className="group flex items-center gap-3 px-6 py-3 bg-gradient-to-r from-destructive to-destructive/90 text-destructive-foreground rounded-xl hover:from-destructive/90 hover:to-destructive transition-all duration-300 shadow-lg hover:shadow-xl"
+            whileHover={{ scale: 1.05 }} 
             whileTap={{ scale: 0.95 }}
           >
             <LogOut size={20} className="transition-transform group-hover:-translate-x-1" />
@@ -153,13 +194,10 @@ const Account = () => {
 
               {/* Navigation Tabs */}
               <div className="p-2">
-                {[
-                  { id: 'profile', label: 'Profile Details', icon: User, description: 'View account information' },
-                  { id: 'inquiries', label: 'My Inquiries', icon: MessageSquare, description: 'Track your requests' },
-                ].map((tab) => (
+                {navigationTabs.map((tab) => (
                   <motion.button
                     key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => handleTabChange(tab.id)}
                     className={`flex items-center justify-between w-full p-4 text-left rounded-xl transition-all duration-300 ${
                       activeTab === tab.id
                         ? 'bg-gradient-to-r from-primary/10 to-primary/5 border-l-4 border-primary text-primary shadow-sm'
@@ -209,15 +247,11 @@ const Account = () => {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {[
-                        { label: 'Full Name', value: user.name, icon: UserCircle, color: 'text-blue-500' },
-                        { label: 'Email Address', value: user.email, icon: Mail, color: 'text-red-500' },
-                        { label: 'Phone Number', value: user.phone || 'Not provided', icon: Phone, color: 'text-green-500' },
-                        { label: 'Account Role', value: user.role, icon: Shield, color: 'text-purple-500' },
-                      ].map((item) => (
-                        <div
+                      {profileItems.map((item) => (
+                        <motion.div
                           key={item.label}
                           className="group bg-gradient-to-br from-card to-muted/30 p-6 rounded-xl border border-border hover:border-primary/30 transition-all duration-300 hover:shadow-lg"
+                          whileHover={{ y: -5 }}
                         >
                           <div className="flex items-center gap-4">
                             <div className={`p-3 rounded-lg ${item.color.replace('text', 'bg')}/10`}>
@@ -228,7 +262,7 @@ const Account = () => {
                               <p className="font-semibold text-lg">{item.value}</p>
                             </div>
                           </div>
-                        </div>
+                        </motion.div>
                       ))}
                     </div>
                   </motion.div>
@@ -250,7 +284,7 @@ const Account = () => {
                       </div>
                     </div>
 
-                    {isLoading ? (
+                    {loadingInquiries ? (
                       <div className="flex flex-col items-center justify-center py-12">
                         <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent mb-4" />
                         <p className="text-muted-foreground">Loading your inquiries...</p>
@@ -277,7 +311,7 @@ const Account = () => {
                                 <div className="flex items-center gap-2">
                                   {getStatusIcon(inquiry.status)}
                                   <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(inquiry.status)}`}>
-                                    {inquiry.status.charAt(0).toUpperCase() + inquiry.status.slice(1)}
+                                    {inquiry.status?.charAt(0)?.toUpperCase() + inquiry.status?.slice(1) || 'Unknown'}
                                   </span>
                                 </div>
                               </div>

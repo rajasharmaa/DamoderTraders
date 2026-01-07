@@ -1,9 +1,9 @@
 // pages/Categories.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Helmet } from 'react-helmet';
 import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { Search, Filter, ArrowRight, TrendingUp, Shield, Clock, Zap } from 'lucide-react';
+import { Search, TrendingUp, Shield, Clock, Zap, ArrowRight } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import Navbar from '@/components/Navbar';
@@ -57,6 +57,17 @@ const defaultCategories: Category[] = [
   },
 ];
 
+// Helper function to normalize category names from backend
+const normalizeCategory = (category: string): string => {
+  const cat = category?.toLowerCase() || '';
+  
+  if (cat.includes('pipe') || cat === 'pipes') return 'pipes';
+  if (cat.includes('fitting') || cat.includes('joint') || cat.includes('connector') || cat === 'fittings') return 'fittings';
+  if (cat.includes('valve') || cat === 'valves') return 'valves';
+  
+  return 'other';
+};
+
 const Categories = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [categories, setCategories] = useState<Category[]>(defaultCategories);
@@ -69,6 +80,7 @@ const Categories = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
+  // Fetch categories and product counts
   useEffect(() => {
     const fetchCategories = async () => {
       try {
@@ -77,11 +89,13 @@ const Categories = () => {
         
         const categoryCounts: Record<string, number> = {};
         
+        // Count products by normalized category
         products.forEach((product: any) => {
-          const category = product.category?.toLowerCase() || 'other';
+          const category = normalizeCategory(product.category || '');
           categoryCounts[category] = (categoryCounts[category] || 0) + 1;
         });
         
+        // Update categories with actual product counts
         const updatedCategories = defaultCategories.map(cat => ({
           ...cat,
           productCount: categoryCounts[cat.id] || 0,
@@ -89,9 +103,13 @@ const Categories = () => {
         
         setCategories(updatedCategories);
       } catch (error: any) {
+        console.error('Error fetching categories:', error);
+        // Keep default categories if API fails
+        setCategories(defaultCategories);
+        
         toast({
-          title: 'Error',
-          description: 'Failed to load categories',
+          title: 'Error Loading Data',
+          description: 'Using cached categories. Some product counts may be outdated.',
           variant: 'destructive',
         });
       } finally {
@@ -100,19 +118,22 @@ const Categories = () => {
     };
 
     fetchCategories();
-  }, [toast]);
+  }, []); // Empty dependency array - runs once on mount
 
-  const filteredCategories = categories.filter(category => {
-    const matchesSearch = 
-      category.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      category.description.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    if (activeFilter === 'trending') {
-      return matchesSearch && category.trending;
-    }
-    
-    return matchesSearch;
-  });
+  // Memoize filtered categories for performance
+  const filteredCategories = useMemo(() => {
+    return categories.filter(category => {
+      const matchesSearch = 
+        category.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        category.description.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      if (activeFilter === 'trending') {
+        return matchesSearch && category.trending;
+      }
+      
+      return matchesSearch;
+    });
+  }, [categories, searchQuery, activeFilter]);
 
   // Animation variants
   const containerVariants = {
@@ -133,6 +154,12 @@ const Categories = () => {
       opacity: 1,
       transition: { type: "spring", stiffness: 100 }
     }
+  };
+
+  // Fallback image handler
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    e.currentTarget.src = 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?w=680&h=510&fit=crop';
+    e.currentTarget.alt = 'Industrial equipment placeholder';
   };
 
   return (
@@ -182,10 +209,10 @@ const Categories = () => {
               { icon: Clock, label: 'Years Experience', value: '25+' },
               { icon: Zap, label: 'Products', value: '500+' },
               { icon: TrendingUp, label: 'Satisfaction', value: '98%' },
-            ].map((stat, index) => (
+            ].map((stat) => (
               <motion.div
                 key={stat.label}
-              
+                
                 className="bg-white/80 backdrop-blur-sm rounded-xl p-4 border border-gray-200 shadow-sm"
               >
                 <div className="flex items-center gap-3">
@@ -251,7 +278,6 @@ const Categories = () => {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-12 pr-4 py-3 rounded-xl border-2 border-gray-200 bg-white/80 backdrop-blur-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
                 />
-                <Filter className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
               </div>
             </div>
           </div>
@@ -274,7 +300,7 @@ const Categories = () => {
               initial="hidden"
               animate="visible"
             >
-              {filteredCategories.map((category, index) => (
+              {filteredCategories.map((category) => (
                 <motion.div
                   key={category.id}
                   
@@ -293,7 +319,7 @@ const Categories = () => {
                       
                       {/* Product Count */}
                       <div className="absolute top-4 right-4 z-10 bg-black/70 backdrop-blur-sm text-white px-3 py-1 rounded-full text-sm font-medium">
-                        {category.productCount} Products
+                        {category.productCount} {category.productCount === 1 ? 'Product' : 'Products'}
                       </div>
                       
                       {/* Image Container */}
@@ -304,6 +330,7 @@ const Categories = () => {
                           alt={category.name}
                           className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
                           loading="lazy"
+                          onError={handleImageError}
                         />
                       </div>
                       

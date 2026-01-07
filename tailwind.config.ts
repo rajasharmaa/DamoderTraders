@@ -1,8 +1,15 @@
 import type { Config } from "tailwindcss";
+import type { PluginAPI } from 'tailwindcss/types/config';
 
 export default {
   darkMode: ["class"],
-  content: ["./pages/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./app/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"],
+  content: [
+    "./pages/**/*.{ts,tsx}",
+    "./components/**/*.{ts,tsx}",
+    "./app/**/*.{ts,tsx}",
+    "./src/**/*.{ts,tsx}",
+    "./styles/**/*.css",
+  ],
   prefix: "",
   theme: {
     container: {
@@ -67,6 +74,8 @@ export default {
           border: "hsl(var(--sidebar-border))",
           ring: "hsl(var(--sidebar-ring))",
         },
+        pipe: "hsl(var(--pipe-color))",
+        spark: "hsl(var(--spark-color))",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -75,6 +84,7 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        display: ['Inter', 'system-ui', 'sans-serif'],
       },
       keyframes: {
         "accordion-down": {
@@ -97,6 +107,28 @@ export default {
           from: { transform: "translateX(100%)" },
           to: { transform: "translateX(0)" },
         },
+        "float": {
+          "0%, 100%": { transform: "translateY(0px)" },
+          "50%": { transform: "translateY(-20px)" },
+        },
+        "gradient": {
+          "0%, 100%": { backgroundPosition: "0% 50%" },
+          "50%": { backgroundPosition: "100% 50%" },
+        },
+        "slide-up": {
+          from: { opacity: "0", transform: "translateY(20px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+        "particle-float": {
+          "0%, 100%": { 
+            transform: "translateY(0) translateX(0)", 
+            opacity: "0.3" 
+          },
+          "50%": { 
+            transform: "translateY(-20px) translateX(10px)", 
+            opacity: "1" 
+          },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
@@ -104,8 +136,132 @@ export default {
         "fade-in": "fade-in 0.3s ease-out",
         "fade-in-up": "fade-in-up 0.8s ease-out",
         "slide-in-right": "slide-in-right 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+        "float": "float 6s ease-in-out infinite",
+        "gradient": "gradient 3s ease infinite",
+        "slide-up": "slide-up 0.5s ease-out",
+        "particle-float": "particle-float 4s ease-in-out infinite",
+      },
+      boxShadow: {
+        'sm': 'var(--shadow-sm)',
+        'md': 'var(--shadow-md)',
+        'lg': 'var(--shadow-lg)',
+        'nav': 'var(--shadow-nav)',
+        'industrial': '0 0 10px hsla(var(--pipe-color) / 0.1)',
+      },
+      backdropFilter: {
+        'none': 'none',
+        'blur': 'blur(20px)',
+        'blur-sm': 'blur(10px)',
+        'blur-md': 'blur(16px)',
+        'blur-lg': 'blur(24px)',
+      },
+      backgroundImage: {
+        'grid-pattern': `
+          linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px)
+        `,
+        'grid-3d': `
+          linear-gradient(90deg, rgba(56, 189, 248, 0.1) 1px, transparent 1px),
+          linear-gradient(rgba(56, 189, 248, 0.1) 1px, transparent 1px)
+        `,
+        'gradient-hero': 'var(--gradient-hero)',
+        'gradient-primary': 'var(--gradient-primary)',
+      },
+      perspective: {
+        '1000': '1000px',
+        '2000': '2000px',
+      },
+      textShadow: {
+        'lg': '0 4px 8px rgba(0, 0, 0, 0.3)',
+        '3d': `
+          0 1px 0 #ccc,
+          0 2px 0 #c9c9c9,
+          0 3px 0 #bbb,
+          0 4px 0 #b9b9b9,
+          0 5px 0 #aaa,
+          0 6px 1px rgba(0,0,0,.1),
+          0 0 5px rgba(0,0,0,.1),
+          0 1px 3px rgba(0,0,0,.3),
+          0 3px 5px rgba(0,0,0,.2),
+          0 5px 10px rgba(0,0,0,.25),
+          0 10px 10px rgba(0,0,0,.2),
+          0 20px 20px rgba(0,0,0,.15)
+        `,
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [
+    require("tailwindcss-animate"),
+    require('tailwindcss-textshadow'),
+    require('tailwindcss-filters'),
+    
+    // ✅ TYPE-SAFE CUSTOM PLUGIN
+    function ({ addUtilities, theme }: PluginAPI) {
+      const newUtilities = {
+        '.glass-effect': {
+          backdropFilter: 'blur(16px) saturate(180%)',
+          WebkitBackdropFilter: 'blur(16px) saturate(180%)',
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.05) 100%)',
+          border: '1px solid rgba(255, 255, 255, 0.125)',
+        },
+        '.glass-effect-white': {
+          backdropFilter: 'blur(20px) saturate(200%)',
+          WebkitBackdropFilter: 'blur(20px) saturate(200%)',
+          background: 'rgba(255, 255, 255, 0.9)',
+          border: '1px solid rgba(255, 255, 255, 0.3)',
+          boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.1)',
+        },
+        '.bg-grid-white-5': {
+          backgroundImage: `
+            linear-gradient(to right, rgba(255,255,255,.05) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(255,255,255,.05) 1px, transparent 1px)
+          `,
+          backgroundSize: '50px 50px',
+        },
+        '.transform-style-3d': {
+          transformStyle: 'preserve-3d',
+        },
+        '.backface-hidden': {
+          backfaceVisibility: 'hidden',
+        },
+        '.perspective-1000': {
+          perspective: '1000px',
+        },
+      };
+      
+      addUtilities(newUtilities, {
+        respectPrefix: true,
+        respectImportant: true,
+      });
+    },
+    
+    // ✅ ANOTHER TYPE-SAFE PLUGIN FOR RESPONSIVE UTILITIES
+    function ({ addComponents, theme }: PluginAPI) {
+      const components = {
+        '.responsive-container': {
+          width: '100%',
+          marginLeft: 'auto',
+          marginRight: 'auto',
+          paddingLeft: theme('spacing.4'),
+          paddingRight: theme('spacing.4'),
+          '@screen sm': {
+            paddingLeft: theme('spacing.6'),
+            paddingRight: theme('spacing.6'),
+          },
+          '@screen lg': {
+            paddingLeft: theme('spacing.8'),
+            paddingRight: theme('spacing.8'),
+          },
+        },
+        '.industrial-gradient-text': {
+          background: `linear-gradient(135deg, ${theme('colors.industrial.blue')} 0%, ${theme('colors.industrial["blue-light"]')} 100%)`,
+          WebkitBackgroundClip: 'text',
+          WebkitTextFillColor: 'transparent',
+          backgroundClip: 'text',
+        },
+      };
+      
+      
+    },
+  ],
 } satisfies Config;

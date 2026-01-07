@@ -5,7 +5,8 @@ import { motion } from 'framer-motion';
 import { 
   MapPin, Phone, Mail, Clock, Send, User, MessageSquare,
   Building, Globe, Headphones, CheckCircle, ArrowRight,
-  Facebook, Twitter, Instagram, Linkedin, Sparkles, Lock
+  Facebook, Twitter, Instagram, Linkedin, Sparkles, Lock,
+  AlertCircle
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { api } from '@/lib/api';
@@ -13,13 +14,30 @@ import { useAuth } from '@/context/AuthContext';
 import Navbar from '@/components/Navbar';
 import Footer from '@/components/Footer';
 import IndustrialBackground from '@/components/IndustrialBackground';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
+
+// Company constants - single source of truth
+const COMPANY_INFO = {
+  name: 'Damodar Traders',
+  phonePrimary: '+91 98765 43210',
+  phoneSecondary: '+91 22 1234 5678',
+  emailPrimary: 'info@damodartraders.com',
+  emailSecondary: 'sales@damodartraders.com',
+  address: '1st floor, 37 Ellora plaza, 3, Maharani Rd, Indore, Madhya Pradesh 452007',
+  googleMapsEmbed: 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3679.223583988378!2d75.8641808!3d22.7167381!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3962fd11bc280595%3A0xffd5a99f38fa3a02!2sDamodar%20Traders!5e0!3m2!1sen!2sin',
+  social: {
+    facebook: '#',
+    twitter: '#',
+    instagram: '#',
+    linkedin: '#'
+  }
+} as const;
 
 const Contact = () => {
   const { toast } = useToast();
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [lastSubmissionTime, setLastSubmissionTime] = useState<number>(0);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -33,8 +51,8 @@ const Contact = () => {
     if (user) {
       setFormData(prev => ({
         ...prev,
-        name: user.name,
-        email: user.email,
+        name: user.name || '',
+        email: user.email || '',
         phone: user.phone || '',
       }));
     }
@@ -49,14 +67,14 @@ const Contact = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Check if user is logged in
-    if (!user) {
+    // Prevent spam submissions (30 seconds cooldown)
+    const now = Date.now();
+    if (now - lastSubmissionTime < 30000) {
       toast({
-        title: 'Login Required',
-        description: 'Please login to send messages or inquiries',
+        title: 'Please Wait',
+        description: 'Please wait 30 seconds before sending another message.',
         variant: 'destructive',
       });
-      navigate('/login');
       return;
     }
     
@@ -69,11 +87,17 @@ const Contact = () => {
       };
       
       await api.inquiries.create(inquiryData);
+      
+      // Update last submission time
+      setLastSubmissionTime(Date.now());
+      
       toast({
         title: '🎉 Message Sent Successfully!',
         description: 'Thank you for reaching out! Our team will contact you within 24 hours.',
         className: 'bg-gradient-to-r from-green-500 to-emerald-600 text-white border-0',
       });
+      
+      // Reset form (keep user info if logged in)
       setFormData({ 
         name: user?.name || '', 
         email: user?.email || '', 
@@ -81,10 +105,19 @@ const Contact = () => {
         subject: '', 
         message: '' 
       });
+      
+      // Scroll to top for better UX
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error: any) {
+      // Extract meaningful error message
+      const errorMessage = 
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to send message. Please try again later.';
+      
       toast({
         title: '⚠️ Submission Failed',
-        description: error.message || 'Failed to send message. Please try again.',
+        description: errorMessage,
         variant: 'destructive',
       });
     } finally {
@@ -92,33 +125,42 @@ const Contact = () => {
     }
   };
 
+  const handleSocialClick = (e: React.MouseEvent<HTMLAnchorElement>, platform: string) => {
+    e.preventDefault();
+    // Show coming soon message since links are placeholder
+    toast({
+      title: 'Coming Soon',
+      description: `${platform} page will be available soon`,
+    });
+  };
+
   const contactCards = [
     {
       icon: MapPin,
       title: 'Visit Our Office',
-      content: '1st floor, 37 Ellora plaza, 3, Maharani Rd, Indore, Madhya Pradesh 452007',
+      content: COMPANY_INFO.address,
       gradient: 'from-blue-500 to-cyan-500',
       bg: 'bg-blue-50',
       action: 'Get Directions',
-      link: 'https://maps.google.com/?q=Damodar+Traders+Indore'
+      link: `https://maps.google.com/?q=${encodeURIComponent(COMPANY_INFO.name + ' ' + COMPANY_INFO.address)}`
     },
     {
       icon: Phone,
       title: 'Call Us',
-      content: '+91 98765 43210\n+91 22 1234 5678',
+      content: `${COMPANY_INFO.phonePrimary}\n${COMPANY_INFO.phoneSecondary}`,
       gradient: 'from-purple-500 to-pink-500',
       bg: 'bg-purple-50',
       action: 'Call Now',
-      link: 'tel:+919876543210'
+      link: `tel:${COMPANY_INFO.phonePrimary.replace(/\s/g, '')}`
     },
     {
       icon: Mail,
       title: 'Email Us',
-      content: 'info@damodartraders.com\nsales@damodartraders.com',
+      content: `${COMPANY_INFO.emailPrimary}\n${COMPANY_INFO.emailSecondary}`,
       gradient: 'from-amber-500 to-orange-500',
       bg: 'bg-amber-50',
       action: 'Send Email',
-      link: 'mailto:info@damodartraders.com'
+      link: `mailto:${COMPANY_INFO.emailPrimary}`
     },
     {
       icon: Clock,
@@ -132,11 +174,23 @@ const Contact = () => {
   ];
 
   const socialLinks = [
-    { icon: Facebook, label: 'Facebook', href: '#', color: 'hover:bg-blue-600' },
-    { icon: Twitter, label: 'Twitter', href: '#', color: 'hover:bg-sky-500' },
-    { icon: Instagram, label: 'Instagram', href: '#', color: 'hover:bg-pink-600' },
-    { icon: Linkedin, label: 'LinkedIn', href: '#', color: 'hover:bg-blue-700' },
+    { icon: Facebook, label: 'Facebook', href: COMPANY_INFO.social.facebook, color: 'hover:bg-blue-600' },
+    { icon: Twitter, label: 'Twitter', href: COMPANY_INFO.social.twitter, color: 'hover:bg-sky-500' },
+    { icon: Instagram, label: 'Instagram', href: COMPANY_INFO.social.instagram, color: 'hover:bg-pink-600' },
+    { icon: Linkedin, label: 'LinkedIn', href: COMPANY_INFO.social.linkedin, color: 'hover:bg-blue-700' },
   ];
+
+  // Check if form is valid for submission
+  const isFormValid = () => {
+    return formData.name && 
+           formData.email && 
+           formData.phone && 
+           formData.subject && 
+           formData.message;
+  };
+
+  // Check if phone is missing for logged-in user
+  const isPhoneMissing = user && !formData.phone;
 
   return (
     <>
@@ -144,7 +198,7 @@ const Contact = () => {
         <title>Contact Us - Damodar Traders | Get in Touch</title>
         <meta
           name="description"
-          content="Contact Damodar Traders for inquiries, quotes, or any assistance. Located in Indore, MP. Call +91 98765 43210 or email info@damodartraders.com"
+          content={`Contact ${COMPANY_INFO.name} for inquiries, quotes, or any assistance. Located in Indore, MP. Call ${COMPANY_INFO.phonePrimary} or email ${COMPANY_INFO.emailPrimary}`}
         />
       </Helmet>
 
@@ -182,7 +236,7 @@ const Contact = () => {
               
               <div className="flex flex-wrap justify-center gap-4">
                 <a 
-                  href="tel:+919876543210"
+                  href={`tel:${COMPANY_INFO.phonePrimary.replace(/\s/g, '')}`}
                   className="px-8 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 rounded-lg font-semibold hover:from-blue-700 hover:to-cyan-700 transition-all duration-300 flex items-center gap-2 group"
                 >
                   <Phone className="w-5 h-5" />
@@ -249,6 +303,8 @@ const Contact = () => {
                   <p className="text-gray-600 text-sm mb-4 whitespace-pre-line">{card.content}</p>
                   <a 
                     href={card.link}
+                    target={card.link.startsWith('http') ? '_blank' : '_self'}
+                    rel={card.link.startsWith('http') ? 'noopener noreferrer' : undefined}
                     className="inline-flex items-center gap-1 text-sm font-medium text-gray-700 group-hover:text-blue-600 transition-colors"
                   >
                     {card.action}
@@ -283,6 +339,21 @@ const Contact = () => {
                       <p className="text-gray-600">We typically respond within 2 hours</p>
                     </div>
                   </div>
+
+                  {/* Phone missing warning for logged-in users */}
+                  {isPhoneMissing && (
+                    <div className="mb-6 p-4 bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl border border-amber-200">
+                      <div className="flex items-center gap-3">
+                        <AlertCircle className="w-5 h-5 text-amber-600" />
+                        <div>
+                          <div className="font-bold text-amber-800">Phone Number Required</div>
+                          <div className="text-sm text-amber-700">
+                            Please add your phone number to send messages. This helps us contact you quickly.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Login Requirement Notice */}
                   {!user && (
@@ -364,6 +435,11 @@ const Contact = () => {
                           }`}
                           placeholder="+91 98765 43210"
                         />
+                        {isPhoneMissing && (
+                          <p className="text-xs text-amber-600">
+                            Please add your phone number to continue
+                          </p>
+                        )}
                       </div>
 
                       <div className="space-y-2">
@@ -413,9 +489,9 @@ const Contact = () => {
 
                     <button
                       type="submit"
-                      disabled={isSubmitting || !user}
+                      disabled={isSubmitting || !user || !isFormValid()}
                       className={`w-full py-4 text-white font-semibold rounded-xl transition-all duration-300 flex items-center justify-center gap-2 group ${
-                        user 
+                        user && isFormValid()
                           ? 'bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700'
                           : 'bg-gradient-to-r from-gray-400 to-gray-500 cursor-not-allowed'
                       }`}
@@ -424,6 +500,11 @@ const Contact = () => {
                         <>
                           <Lock className="w-5 h-5" />
                           Login to Send Message
+                        </>
+                      ) : !isFormValid() ? (
+                        <>
+                          <AlertCircle className="w-5 h-5" />
+                          Fill All Required Fields
                         </>
                       ) : isSubmitting ? (
                         <>
@@ -491,7 +572,8 @@ const Contact = () => {
                       <a
                         key={social.label}
                         href={social.href}
-                        className={`p-3 bg-gray-100 rounded-xl ${social.color} transition-all duration-300 group`}
+                        onClick={(e) => handleSocialClick(e, social.label)}
+                        className={`p-3 bg-gray-100 rounded-xl ${social.color} transition-all duration-300 group cursor-pointer`}
                         aria-label={social.label}
                       >
                         <social.icon className="w-5 h-5 text-gray-600 group-hover:text-white transition-colors" />
@@ -603,14 +685,14 @@ const Contact = () => {
                 className="lg:col-span-2 relative rounded-2xl overflow-hidden shadow-2xl"
               >
                 <iframe
-                  src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3679.223583988378!2d75.8641808!3d22.7167381!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3962fd11bc280595%3A0xffd5a99f38fa3a02!2sDamodar%20Traders!5e0!3m2!1sen!2sin!4v1646812345678!5m2!1sen!2sin"
+                  src={COMPANY_INFO.googleMapsEmbed}
                   width="100%"
                   height="400"
                   style={{ border: 0 }}
                   allowFullScreen
                   loading="lazy"
                   referrerPolicy="no-referrer-when-downgrade"
-                  title="Damodar Traders Location"
+                  title={`${COMPANY_INFO.name} Location`}
                   className="w-full h-full"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-gray-900/20 to-transparent pointer-events-none"></div>
@@ -639,8 +721,7 @@ const Contact = () => {
                     <div>
                       <h4 className="font-medium text-gray-900">Address</h4>
                       <p className="text-gray-600 text-sm">
-                        1st floor, 37 Ellora plaza, 3, Maharani Rd, 
-                        Indore, Madhya Pradesh 452007
+                        {COMPANY_INFO.address}
                       </p>
                     </div>
                   </div>
@@ -649,7 +730,7 @@ const Contact = () => {
                     <Phone className="w-5 h-5 text-blue-500 flex-shrink-0" />
                     <div>
                       <h4 className="font-medium text-gray-900">Contact</h4>
-                      <p className="text-gray-600 text-sm">+91 98765 43210</p>
+                      <p className="text-gray-600 text-sm">{COMPANY_INFO.phonePrimary}</p>
                     </div>
                   </div>
 
@@ -657,7 +738,7 @@ const Contact = () => {
                     <Mail className="w-5 h-5 text-blue-500 flex-shrink-0" />
                     <div>
                       <h4 className="font-medium text-gray-900">Email</h4>
-                      <p className="text-gray-600 text-sm">info@damodartraders.com</p>
+                      <p className="text-gray-600 text-sm">{COMPANY_INFO.emailPrimary}</p>
                     </div>
                   </div>
 
@@ -681,7 +762,7 @@ const Contact = () => {
                 </div>
 
                 <a
-                  href="https://maps.google.com/?q=Damodar+Traders+Indore"
+                  href={`https://maps.google.com/?q=${encodeURIComponent(COMPANY_INFO.name + ' ' + COMPANY_INFO.address)}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-6 w-full py-3 bg-gradient-to-r from-gray-900 to-gray-700 text-white font-medium rounded-xl hover:from-gray-800 hover:to-gray-600 transition-all duration-300 flex items-center justify-center gap-2"
@@ -712,14 +793,14 @@ const Contact = () => {
               </p>
               <div className="flex flex-col sm:flex-row gap-4 justify-center">
                 <a 
-                  href="tel:+919876543210"
+                  href={`tel:${COMPANY_INFO.phonePrimary.replace(/\s/g, '')}`}
                   className="px-8 py-4 bg-white text-blue-600 rounded-lg font-bold hover:bg-gray-100 transition-all duration-300 shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
                 >
                   <Phone className="w-5 h-5" />
                   Call Emergency Support
                 </a>
                 <a 
-                  href="mailto:support@damodartraders.com"
+                  href={`mailto:${COMPANY_INFO.emailPrimary}`}
                   className="px-8 py-4 bg-transparent border-2 border-white text-white rounded-lg font-bold hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-2"
                 >
                   <Mail className="w-5 h-5" />

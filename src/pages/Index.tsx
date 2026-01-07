@@ -19,13 +19,73 @@ import TypewriterText from '@/components/TypewriterText';
 // Register GSAP plugins
 gsap.registerPlugin(ScrollTrigger);
 
+// Centralized company data
+const COMPANY = {
+  name: 'Damodar Traders',
+  phone: '+91 9876543210',
+  since: 2011,
+  address: '1st floor, 37 Ellora plaza, 3, Maharani Rd, Indore, Madhya Pradesh 452007',
+  email: 'info@damodartraders.com',
+  workingHours: {
+    weekdays: '9:00 AM - 6:00 PM',
+    saturday: '9:00 AM - 4:00 PM'
+  },
+  stats: {
+    clients: '1500+',
+    products: '5000+',
+    experience: '12+',
+    awards: '25+',
+    corporateClients: '500+',
+    rating: '4.9/5',
+    repeatBusiness: '98%'
+  }
+} as const;
+
+// Fixed ImageWithFallback component
+const ImageWithFallback = ({ 
+  src, 
+  alt, 
+  fallback = '/images/placeholder-category.jpg',
+  className = '',
+}: {
+  src: string;
+  alt: string;
+  fallback?: string;
+  className?: string;
+}) => {
+  const [imgSrc, setImgSrc] = useState(src);
+  
+  const handleError = () => {
+    if (fallback) {
+      setImgSrc(fallback);
+    }
+  };
+  
+  return (
+    <img
+      src={imgSrc}
+      alt={alt}
+      onError={handleError}
+      loading="lazy"
+      className={className}
+      // NO ...props spread operator - this was causing the warning
+    />
+  );
+};
+
 const Index = () => {
   const heroRef = useRef<HTMLDivElement>(null);
   const featuresRef = useRef<HTMLDivElement>(null);
   const categoriesRef = useRef<HTMLDivElement>(null);
   const ctaRef = useRef<HTMLDivElement>(null);
   const hasAnimated = useRef(false);
-  const [scrollY, setScrollY] = useState(0);
+  
+  // Refs for animation targets
+  const featureRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const categoryRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const statRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const tl = useRef<gsap.core.Timeline | null>(null);
+  
   const [activeFilter, setActiveFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -71,7 +131,7 @@ const Index = () => {
   const heroTypewriterTexts = [
     "Industrial Excellence in Every Pipe",
     "Quality Pipe Fittings Since 2011",
-    "Trusted by 1500+ Industries",
+    `Trusted by ${COMPANY.stats.clients} Industries`,
     "ISO Certified Solutions"
   ];
 
@@ -91,10 +151,10 @@ const Index = () => {
 
   // Statistics data
   const stats = [
-    { icon: Users, value: '1500+', label: 'Happy Clients', color: 'text-blue-600' },
-    { icon: Package, value: '5000+', label: 'Products', color: 'text-green-600' },
-    { icon: Clock, value: '12+', label: 'Years Experience', color: 'text-purple-600' },
-    { icon: Award, value: '25+', label: 'Industry Awards', color: 'text-amber-600' },
+    { icon: Users, value: COMPANY.stats.clients, label: 'Happy Clients', color: 'text-blue-600' },
+    { icon: Package, value: COMPANY.stats.products, label: 'Products', color: 'text-green-600' },
+    { icon: Clock, value: COMPANY.stats.experience, label: 'Years Experience', color: 'text-purple-600' },
+    { icon: Award, value: COMPANY.stats.awards, label: 'Industry Awards', color: 'text-amber-600' },
   ];
 
   // Features data
@@ -102,7 +162,7 @@ const Index = () => {
     { icon: Shield, title: 'Quality Certified', description: 'ISO 9001 certified products with BIS approval' },
     { icon: Truck, title: 'Fast Delivery', description: 'Pan-India delivery within 3-7 business days' },
     { icon: HeadphonesIcon, title: '24/7 Support', description: 'Round-the-clock customer service and technical support' },
-    { icon: Award, title: 'Industry Leader', description: 'Trusted by top industrial companies since 2011' },
+    { icon: Award, title: 'Industry Leader', description: `Trusted by top industrial companies since ${COMPANY.since}` },
   ];
 
   const filteredCategories = categories.filter(category => {
@@ -121,9 +181,24 @@ const Index = () => {
     if (hasAnimated.current) return;
     hasAnimated.current = true;
 
-    // Enhanced GSAP animations
+    // Cleanup function
+    const cleanup = () => {
+      tl.current?.kill();
+      ScrollTrigger.getAll().forEach(trigger => trigger.kill());
+      gsap.killTweensOf("*");
+    };
+
+    // Respect reduced motion preference
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (prefersReducedMotion) {
+      return cleanup;
+    }
+
+    // Store timeline
+    tl.current = gsap.timeline();
+    
+    // Hero section parallax effect (desktop only)
     if (window.innerWidth > 768) {
-      // Hero section parallax effect
       gsap.fromTo(heroRef.current, 
         { y: 0 },
         { 
@@ -138,9 +213,7 @@ const Index = () => {
       );
 
       // Hero content animations
-      const tl = gsap.timeline();
-      
-      tl.from('#head', {
+      tl.current.from('#head', {
         y: 50,
         opacity: 0,
         duration: 1,
@@ -167,48 +240,54 @@ const Index = () => {
       }, '-=0.2');
 
       // Stats counter animation
-      stats.forEach((_, index) => {
-        gsap.from(`.stat-${index}`, {
-          y: 30,
-          opacity: 0,
-          duration: 0.6,
-          delay: index * 0.1,
-          scrollTrigger: {
-            trigger: featuresRef.current,
-            start: 'top 80%',
-            once: true
-          }
-        });
+      statRefs.current.forEach((stat, index) => {
+        if (stat) {
+          gsap.from(stat, {
+            y: 30,
+            opacity: 0,
+            duration: 0.6,
+            delay: index * 0.1,
+            scrollTrigger: {
+              trigger: featuresRef.current,
+              start: 'top 80%',
+              once: true
+            }
+          });
+        }
       });
 
       // Features animation
-      features.forEach((_, index) => {
-        gsap.from(`.feature-${index}`, {
-          y: 40,
-          opacity: 0,
-          duration: 0.6,
-          delay: index * 0.1,
-          scrollTrigger: {
-            trigger: featuresRef.current,
-            start: 'top 70%',
-            once: true
-          }
-        });
+      featureRefs.current.forEach((feature, index) => {
+        if (feature) {
+          gsap.from(feature, {
+            y: 40,
+            opacity: 0,
+            duration: 0.6,
+            delay: index * 0.1,
+            scrollTrigger: {
+              trigger: featuresRef.current,
+              start: 'top 70%',
+              once: true
+            }
+          });
+        }
       });
 
-      // Categories animation
-      categories.forEach((_, index) => {
-        gsap.from(`.category-${index}`, {
-          y: 40,
-          opacity: 0,
-          duration: 0.6,
-          delay: index * 0.1,
-          scrollTrigger: {
-            trigger: categoriesRef.current,
-            start: 'top 75%',
-            once: true
-          }
-        });
+      // Categories animation (only filtered categories)
+      categoryRefs.current.forEach((category, index) => {
+        if (category) {
+          gsap.from(category, {
+            y: 40,
+            opacity: 0,
+            duration: 0.6,
+            delay: index * 0.1,
+            scrollTrigger: {
+              trigger: categoriesRef.current,
+              start: 'top 75%',
+              once: true
+            }
+          });
+        }
       });
 
       // CTA section animation
@@ -255,19 +334,7 @@ const Index = () => {
       stagger: 0.2
     });
 
-    return () => {
-      ScrollTrigger.getAll().forEach(trigger => trigger.kill());
-    };
-  }, []);
-
-  // Handle scroll for dynamic effects
-  useEffect(() => {
-    const handleScroll = () => {
-      setScrollY(window.scrollY);
-    };
-    
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
+    return cleanup;
   }, []);
 
   return (
@@ -276,13 +343,65 @@ const Index = () => {
         <title>Damodar Traders - Premium CI & GI Pipe Fittings | Industrial Solutions</title>
         <meta
           name="description"
-          content="Leading manufacturer of high-quality CI & GI pipe fittings, industrial valves, and pipe solutions since 2011. ISO certified with 1500+ satisfied clients."
+          content={`Leading manufacturer of high-quality CI & GI pipe fittings, industrial valves, and pipe solutions since ${COMPANY.since}. ISO certified with ${COMPANY.stats.clients} satisfied clients.`}
         />
         <meta
           name="keywords"
           content="pipe fittings, CI pipes, GI pipes, industrial valves, foot valves, pipe manufacturers, industrial suppliers"
         />
+        
+        {/* JSON-LD Schema Markup */}
+        <script type="application/ld+json">
+          {JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "LocalBusiness",
+            "name": COMPANY.name,
+            "image": "https://damodartraders.com/logo.jpg",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": COMPANY.address.split(',')[0],
+              "addressLocality": "Indore",
+              "addressRegion": "Madhya Pradesh",
+              "postalCode": "452007",
+              "addressCountry": "IN"
+            },
+            "geo": {
+              "@type": "GeoCoordinates",
+              "latitude": 22.717964,
+              "longitude": 75.857387
+            },
+            "url": "https://damodartraders.com",
+            "telephone": COMPANY.phone,
+            "priceRange": "₹₹",
+            "openingHours": [
+              `Mo-Fr ${COMPANY.workingHours.weekdays.replace(' ', '').replace('-', '').toLowerCase()}`,
+              `Sa ${COMPANY.workingHours.saturday.replace(' ', '').replace('-', '').toLowerCase()}`
+            ],
+            "founder": "Damodar Prasad Sharma",
+            "foundingDate": COMPANY.since.toString(),
+            "awards": "ISO 9001 Certified",
+            "sameAs": [
+              "https://www.facebook.com/damodartraders",
+              "https://www.instagram.com/damodartraders"
+            ]
+          })}
+        </script>
       </Helmet>
+
+      {/* Floating WhatsApp Button */}
+      <div className="fixed bottom-6 right-6 z-50">
+        <a
+          href={`https://wa.me/${COMPANY.phone.replace(/\D/g, '')}?text=Hi%20${encodeURIComponent(COMPANY.name)}%2C%20I%20need%20information%20about%20your%20products`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center w-14 h-14 bg-green-500 text-white rounded-full shadow-lg hover:bg-green-600 transition-all duration-300 hover:scale-110 hover:shadow-xl"
+          aria-label="Chat on WhatsApp"
+        >
+          <svg className="w-7 h-7" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.76.982.998-3.675-.236-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.9 6.994c-.004 5.45-4.438 9.88-9.888 9.88m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.333.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.447h.005c6.554 0 11.89-5.333 11.893-11.893 0-3.18-1.24-6.162-3.491-8.411"/>
+          </svg>
+        </a>
+      </div>
 
       <IndustrialBackground />
       <Navbar />
@@ -291,7 +410,7 @@ const Index = () => {
         {/* Hero Section */}
         <section ref={heroRef} className="relative min-h-screen flex items-center justify-center overflow-hidden">
           {/* Animated Background Elements */}
-          <div className="absolute inset-0 overflow-hidden">
+          <div className="absolute inset-0 overflow-hidden" aria-hidden="true">
             <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl"></div>
             <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl"></div>
             <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-amber-500/5 rounded-full blur-3xl"></div>
@@ -300,13 +419,13 @@ const Index = () => {
           <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
             <div>
               <div className="inline-flex items-center gap-2 px-4 py-2 bg-white/10 backdrop-blur-sm rounded-full mb-6">
-                <Sparkles className="w-4 h-4" />
-                <span className="text-sm font-medium">Since 2011</span>
+                <Sparkles className="w-4 h-4" aria-hidden="true" />
+                <span className="text-sm font-medium">Since {COMPANY.since}</span>
               </div>
               
               <h1 id="head" className="text-5xl md:text-7xl font-bold mb-6">
                 <span className="bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent">
-                  Damodar Traders
+                  {COMPANY.name}
                 </span>
               </h1>
               
@@ -323,7 +442,7 @@ const Index = () => {
               
               <div className="max-w-3xl mx-auto space-y-6">
                 <p className="pera1 text-lg md:text-xl text-gray-600 leading-relaxed">
-                  Established in 2011, <span className="font-semibold text-gray-800">Damodar Traders</span> has grown to become a trusted leader in industrial pipe fittings and solutions. Our commitment to quality, innovation, and customer satisfaction has made us the preferred choice for industries across India.
+                  Established in {COMPANY.since}, <span className="font-semibold text-gray-800">{COMPANY.name}</span> has grown to become a trusted leader in industrial pipe fittings and solutions. Our commitment to quality, innovation, and customer satisfaction has made us the preferred choice for industries across India.
                 </p>
                 
                 <p className="pera1 text-lg md:text-xl text-gray-600 leading-relaxed">
@@ -337,7 +456,7 @@ const Index = () => {
                   className="group px-8 py-4 bg-gradient-to-r from-blue-600 to-cyan-600 text-white font-bold rounded-xl hover:from-blue-700 hover:to-cyan-700 transition-all duration-300 shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
                 >
                   <span>Explore Products</span>
-                  <ArrowRight className="w-5 h-5 group-hover:translate-x-2 transition-transform" />
+                  <ArrowRight className="w-5 h-5 group-hover:translate-x-2 transition-transform" aria-hidden="true" />
                 </Link>
                 
                 <Link
@@ -345,7 +464,7 @@ const Index = () => {
                   className="group px-8 py-4 bg-white/10 backdrop-blur-sm border-2 border-blue-600 text-blue-600 font-bold rounded-xl hover:bg-blue-50 transition-all duration-300 shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
                 >
                   <span>Get Quote</span>
-                  <Phone className="w-5 h-5" />
+                  <Phone className="w-5 h-5" aria-hidden="true" />
                 </Link>
               </div>
             </div>
@@ -353,7 +472,7 @@ const Index = () => {
 
           {/* Scroll Indicator */}
           <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 scroll-indicator">
-            <ChevronDown className="w-6 h-6 text-blue-600 animate-bounce" />
+            <ChevronDown className="w-6 h-6 text-blue-600 animate-bounce" aria-hidden="true" />
           </div>
         </section>
 
@@ -362,10 +481,14 @@ const Index = () => {
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
               {stats.map((stat, index) => (
-                <div key={index} className={`stat-${index} text-center p-6 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1`}>
+                <div 
+                  key={index} 
+                  ref={el => statRefs.current[index] = el}
+                  className="text-center p-6 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1"
+                >
                   <div className="flex justify-center mb-4">
                     <div className="p-3 bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl">
-                      <stat.icon className={`w-6 h-6 ${stat.color}`} />
+                      <stat.icon className={`w-6 h-6 ${stat.color}`} aria-hidden="true" />
                     </div>
                   </div>
                   <div className="text-4xl font-bold text-gray-900 mb-2">{stat.value}</div>
@@ -397,15 +520,19 @@ const Index = () => {
 
             <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
               {features.map((feature, index) => (
-                <div key={index} className={`feature-${index} p-8 bg-gradient-to-b from-white to-gray-50 rounded-2xl border border-gray-200 hover:border-blue-300 hover:shadow-2xl transition-all duration-500 group`}>
+                <div 
+                  key={index} 
+                  ref={el => featureRefs.current[index] = el}
+                  className="p-8 bg-gradient-to-b from-white to-gray-50 rounded-2xl border border-gray-200 hover:border-blue-300 hover:shadow-2xl transition-all duration-500 group"
+                >
                   <div className="inline-flex p-4 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-2xl mb-6 group-hover:scale-110 transition-transform duration-300">
-                    <feature.icon className="w-8 h-8 text-white" />
+                    <feature.icon className="w-8 h-8 text-white" aria-hidden="true" />
                   </div>
                   <h3 className="text-xl font-bold text-gray-900 mb-3">{feature.title}</h3>
                   <p className="text-gray-600">{feature.description}</p>
                   <div className="mt-6 pt-6 border-t border-gray-200/50">
                     <div className="flex items-center gap-2 text-sm text-blue-600 font-medium">
-                      <CheckCircle className="w-4 h-4" />
+                      <CheckCircle className="w-4 h-4" aria-hidden="true" />
                       <span>Learn More</span>
                     </div>
                   </div>
@@ -453,6 +580,7 @@ const Index = () => {
                           ? 'bg-blue-600 text-white'
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                       }`}
+                      aria-label="Show all products"
                     >
                       All Products
                     </button>
@@ -463,23 +591,28 @@ const Index = () => {
                           ? 'bg-blue-600 text-white'
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                       }`}
+                      aria-label="Show trending categories only"
                     >
-                      <TrendingUp size={16} />
+                      <TrendingUp size={16} aria-hidden="true" />
                       Trending
                     </button>
                   </div>
                   
                   {/* Search Bar */}
                   <div className="relative flex-1 md:min-w-[400px]">
-                    <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                    <label htmlFor="category-search" className="sr-only">
+                      Search categories
+                    </label>
+                    <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} aria-hidden="true" />
                     <input
+                      id="category-search"
                       type="text"
                       placeholder="Search categories by name or description..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full pl-12 pr-4 py-3 rounded-xl border-2 border-gray-200 bg-white/80 backdrop-blur-sm focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all"
                     />
-                    <Filter className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                    <Filter className="absolute right-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} aria-hidden="true" />
                   </div>
                 </div>
               </div>
@@ -488,13 +621,13 @@ const Index = () => {
             {/* Categories Grid */}
             <div className="grid sm:grid-cols-1 lg:grid-cols-2 gap-8">
               {filteredCategories.map((category, index) => (
-                <div key={category.id} className={`category-${index}`}>
+                <div key={category.id} ref={el => categoryRefs.current[index] = el}>
                   <Link to={`/products?category=${category.id}`}>
                     <div className="group relative bg-white rounded-2xl overflow-hidden border border-gray-200 shadow-lg hover:shadow-2xl transition-all duration-500 h-full">
                       {/* Trending Badge */}
                       {category.trending && (
                         <div className="absolute top-4 left-4 z-10 bg-gradient-to-r from-orange-500 to-red-500 text-white px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1">
-                          <TrendingUp size={14} />
+                          <TrendingUp size={14} aria-hidden="true" />
                           Trending
                         </div>
                       )}
@@ -507,11 +640,10 @@ const Index = () => {
                       {/* Image Container */}
                       <div className="h-64 overflow-hidden relative">
                         <div className="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent z-1"></div>
-                        <img
+                        <ImageWithFallback
                           src={category.image}
                           alt={category.name}
                           className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
-                          loading="lazy"
                         />
                       </div>
                       
@@ -548,7 +680,7 @@ const Index = () => {
                             Explore Collection
                           </span>
                           <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-all">
-                            <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" />
+                            <ArrowRight className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" aria-hidden="true" />
                           </div>
                         </div>
                       </div>
@@ -564,7 +696,7 @@ const Index = () => {
             {filteredCategories.length === 0 && (
               <div className="text-center py-20">
                 <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gray-100 flex items-center justify-center">
-                  <Search className="w-10 h-10 text-gray-400" />
+                  <Search className="w-10 h-10 text-gray-400" aria-hidden="true" />
                 </div>
                 <h3 className="text-2xl font-semibold mb-3">No Categories Found</h3>
                 <p className="text-gray-600 max-w-md mx-auto">
@@ -586,7 +718,7 @@ const Index = () => {
                 className="inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-gray-900 to-gray-800 text-white font-bold rounded-xl hover:from-gray-800 hover:to-gray-700 transition-all duration-300 shadow-lg hover:shadow-xl"
               >
                 <span>View All Categories</span>
-                <ChevronDown className="w-5 h-5" />
+                <ChevronDown className="w-5 h-5" aria-hidden="true" />
               </Link>
             </div>
           </div>
@@ -606,7 +738,7 @@ const Index = () => {
                 Trusted by <span className="text-blue-600">Industry Leaders</span>
               </h2>
               <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-                Join 1500+ satisfied customers who rely on our quality products
+                Join {COMPANY.stats.clients} satisfied customers who rely on our quality products
               </p>
             </div>
 
@@ -614,32 +746,32 @@ const Index = () => {
               <div className="grid md:grid-cols-3 gap-8">
                 <div className="text-center">
                   <div className="inline-flex items-center gap-2 text-amber-600 mb-4">
-                    <Star className="w-5 h-5 fill-current" />
-                    <Star className="w-5 h-5 fill-current" />
-                    <Star className="w-5 h-5 fill-current" />
-                    <Star className="w-5 h-5 fill-current" />
-                    <Star className="w-5 h-5 fill-current" />
+                    <Star className="w-5 h-5 fill-current" aria-hidden="true" />
+                    <Star className="w-5 h-5 fill-current" aria-hidden="true" />
+                    <Star className="w-5 h-5 fill-current" aria-hidden="true" />
+                    <Star className="w-5 h-5 fill-current" aria-hidden="true" />
+                    <Star className="w-5 h-5 fill-current" aria-hidden="true" />
                   </div>
-                  <div className="text-4xl font-bold text-gray-900 mb-2">4.9/5</div>
+                  <div className="text-4xl font-bold text-gray-900 mb-2">{COMPANY.stats.rating}</div>
                   <div className="text-sm text-gray-600">Customer Rating</div>
                 </div>
                 
                 <div className="text-center">
-                  <TrendingUp className="w-12 h-12 text-green-600 mx-auto mb-4" />
-                  <div className="text-4xl font-bold text-gray-900 mb-2">98%</div>
+                  <TrendingUp className="w-12 h-12 text-green-600 mx-auto mb-4" aria-hidden="true" />
+                  <div className="text-4xl font-bold text-gray-900 mb-2">{COMPANY.stats.repeatBusiness}</div>
                   <div className="text-sm text-gray-600">Repeat Business</div>
                 </div>
                 
                 <div className="text-center">
-                  <Factory className="w-12 h-12 text-blue-600 mx-auto mb-4" />
-                  <div className="text-4xl font-bold text-gray-900 mb-2">500+</div>
+                  <Factory className="w-12 h-12 text-blue-600 mx-auto mb-4" aria-hidden="true" />
+                  <div className="text-4xl font-bold text-gray-900 mb-2">{COMPANY.stats.corporateClients}</div>
                   <div className="text-sm text-gray-600">Corporate Clients</div>
                 </div>
               </div>
               
               <div className="mt-12 text-center">
                 <p className="text-lg text-gray-700 italic max-w-3xl mx-auto">
-                  "Damodar Traders has been our trusted supplier for over 5 years. Their product quality and service reliability are unmatched in the industry."
+                  "{COMPANY.name} has been our trusted supplier for over 5 years. Their product quality and service reliability are unmatched in the industry."
                 </p>
                 <div className="mt-6">
                   <p className="font-bold text-gray-900">Rajesh Mehta</p>
@@ -681,7 +813,7 @@ const Index = () => {
                 to="/contact"
                 className="px-8 py-4 bg-white text-blue-600 font-bold rounded-xl hover:bg-gray-100 transition-all duration-300 shadow-lg hover:shadow-xl flex items-center justify-center gap-3"
               >
-                <Phone className="w-5 h-5" />
+                <Phone className="w-5 h-5" aria-hidden="true" />
                 <span>Request Quote</span>
               </Link>
               
@@ -689,14 +821,14 @@ const Index = () => {
                 to="/products"
                 className="px-8 py-4 bg-transparent border-2 border-white text-white font-bold rounded-xl hover:bg-white/10 transition-all duration-300 flex items-center justify-center gap-3"
               >
-                <Package className="w-5 h-5" />
+                <Package className="w-5 h-5" aria-hidden="true" />
                 <span>Browse Catalog</span>
               </Link>
             </div>
             
             <div className="mt-12 grid grid-cols-2 md:grid-cols-4 gap-6">
               <div className="text-center">
-                <div className="text-2xl font-bold text-white">12+</div>
+                <div className="text-2xl font-bold text-white">{COMPANY.stats.experience}</div>
                 <div className="text-sm text-blue-200">Years Experience</div>
               </div>
               <div className="text-center">
@@ -715,9 +847,9 @@ const Index = () => {
           </div>
           
           {/* Floating Elements */}
-          <div className="floating-element absolute top-1/4 left-10 w-4 h-4 bg-white/20 rounded-full"></div>
-          <div className="floating-element absolute top-1/3 right-20 w-6 h-6 bg-white/20 rounded-full"></div>
-          <div className="floating-element absolute bottom-1/4 left-1/3 w-8 h-8 bg-white/10 rounded-full"></div>
+          <div className="floating-element absolute top-1/4 left-10 w-4 h-4 bg-white/20 rounded-full" aria-hidden="true"></div>
+          <div className="floating-element absolute top-1/3 right-20 w-6 h-6 bg-white/20 rounded-full" aria-hidden="true"></div>
+          <div className="floating-element absolute bottom-1/4 left-1/3 w-8 h-8 bg-white/10 rounded-full" aria-hidden="true"></div>
         </section>
 
         {/* Location Section */}
@@ -730,16 +862,16 @@ const Index = () => {
                 </h2>
                 <div className="space-y-4 text-gray-600">
                   <p className="flex items-center gap-3">
-                    <MapPin className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                    <span>1st floor, 37 Ellora plaza, 3, Maharani Rd, Indore, Madhya Pradesh 452007</span>
+                    <MapPin className="w-5 h-5 text-blue-600 flex-shrink-0" aria-hidden="true" />
+                    <span>{COMPANY.address}</span>
                   </p>
                   <p className="flex items-center gap-3">
-                    <Phone className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                    <span>+91 9876543210</span>
+                    <Phone className="w-5 h-5 text-blue-600 flex-shrink-0" aria-hidden="true" />
+                    <span>{COMPANY.phone}</span>
                   </p>
                   <p className="flex items-center gap-3">
-                    <Clock className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                    <span>Monday - Friday: 9:00 AM - 6:00 PM | Saturday: 9:00 AM - 4:00 PM</span>
+                    <Clock className="w-5 h-5 text-blue-600 flex-shrink-0" aria-hidden="true" />
+                    <span>Monday - Friday: {COMPANY.workingHours.weekdays} | Saturday: {COMPANY.workingHours.saturday}</span>
                   </p>
                 </div>
                 
@@ -750,7 +882,7 @@ const Index = () => {
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors mr-4"
                   >
-                    <MapPin className="w-5 h-5" />
+                    <MapPin className="w-5 h-5" aria-hidden="true" />
                     Open in Google Maps
                   </a>
                   
@@ -768,9 +900,9 @@ const Index = () => {
               <div className="relative rounded-2xl overflow-hidden shadow-2xl group">
                 {/* Image Container with Hover Effect */}
                 <div className="aspect-video bg-gray-200 overflow-hidden">
-                  <img 
+                  <ImageWithFallback
                     src="https://lh3.googleusercontent.com/gps-cs-s/AG0ilSxMYYROxGkLdrdwf-Msjmu_4OEc3HiJ_kIS5fcvVaKRsOzSGeV9GY6ssYxRVIW9-mdFaO5gDEaxJAZjNimcjkGhhQoVuPrKkln6GrPPU6I6j43aK3BHYCgkgyd_Zdqd-0VDD4xr=w160-h106-k-no-pi0-ya339.9-ro-0-fo100"
-                    alt="Damodar Traders Showroom - 360° View"
+                    alt={`${COMPANY.name} Showroom - 360° View`}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                   />
                 </div>
@@ -781,7 +913,7 @@ const Index = () => {
                 {/* Info Badge */}
                 <div className="absolute top-4 right-4">
                   <div className="bg-blue-600 text-white px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-2">
-                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
                     </svg>
                     LIVE VIEW
@@ -791,7 +923,7 @@ const Index = () => {
                 {/* Google Street View Badge */}
                 <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2">
                   <div className="flex items-center gap-2">
-                    <svg className="w-5 h-5 text-green-600" viewBox="0 0 24 24" fill="currentColor">
+                    <svg className="w-5 h-5 text-green-600" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"/>
                     </svg>
                     <span className="font-semibold text-gray-900">Google Street View</span>
@@ -801,8 +933,8 @@ const Index = () => {
                 {/* Showroom Name */}
                 <div className="absolute bottom-6 right-6 text-white">
                   <div className="flex items-center gap-2 bg-black/60 backdrop-blur-sm px-4 py-2 rounded-xl">
-                    <Factory className="w-5 h-5" />
-                    <span className="font-semibold">Damodar Traders Showroom</span>
+                    <Factory className="w-5 h-5" aria-hidden="true" />
+                    <span className="font-semibold">{COMPANY.name} Showroom</span>
                   </div>
                 </div>
                 
@@ -810,7 +942,7 @@ const Index = () => {
                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                   <div className="bg-black/70 backdrop-blur-sm rounded-full p-4">
                     <div className="animate-pulse text-white">
-                      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                       </svg>
@@ -825,7 +957,7 @@ const Index = () => {
               <div className="grid md:grid-cols-3 gap-6">
                 <div className="text-center">
                   <div className="inline-flex items-center justify-center w-12 h-12 bg-blue-100 rounded-xl mb-4">
-                    <MapPin className="w-6 h-6 text-blue-600" />
+                    <MapPin className="w-6 h-6 text-blue-600" aria-hidden="true" />
                   </div>
                   <h3 className="font-bold text-gray-900 mb-2">Easy to Find</h3>
                   <p className="text-sm text-gray-600">Located in prime commercial area with ample parking</p>
@@ -833,7 +965,7 @@ const Index = () => {
                 
                 <div className="text-center">
                   <div className="inline-flex items-center justify-center w-12 h-12 bg-green-100 rounded-xl mb-4">
-                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
                   </div>
@@ -843,7 +975,7 @@ const Index = () => {
                 
                 <div className="text-center">
                   <div className="inline-flex items-center justify-center w-12 h-12 bg-purple-100 rounded-xl mb-4">
-                    <Clock className="w-6 h-6 text-purple-600" />
+                    <Clock className="w-6 h-6 text-purple-600" aria-hidden="true" />
                   </div>
                   <h3 className="font-bold text-gray-900 mb-2">Flexible Timings</h3>
                   <p className="text-sm text-gray-600">Open 6 days a week, appointments available</p>

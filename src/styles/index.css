@@ -1,0 +1,190 @@
+/* Main CSS Entry Point - Damodar Traders */
+
+/* Import all modular CSS files */
+@import './base.css';
+@import './components.css';
+@import './animations.css';
+@import './slider.css';
+@import './utilities.css';
+
+/* ===== RESPONSIVE STYLES ===== */
+@layer utilities {
+  @media (max-width: 860px) {
+    .mobile-menu-btn {
+      @apply block;
+    }
+    
+    .nav-links {
+      @apply fixed top-0 -right-full w-4/5 max-w-[300px] h-screen flex-col items-start pt-20 px-5 gap-0 bg-card z-50 overflow-y-auto;
+      transition: right 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: -5px 0 25px rgba(0, 0, 0, 0.15);
+    }
+    
+    .nav-links.active {
+      @apply right-0;
+    }
+    
+    .nav-links li {
+      @apply w-full p-0 m-0 rounded-none;
+      border-bottom: 1px solid hsla(0 0% 0% / 0.05);
+    }
+    
+    .nav-link {
+      @apply w-full py-4 px-5 text-left justify-start text-base font-medium;
+    }
+    
+    .nav-overlay {
+      @apply fixed inset-0 z-40 opacity-0 invisible transition-all duration-300;
+      background: rgba(0, 0, 0, 0.5);
+    }
+    
+    .nav-overlay.active {
+      @apply opacity-100 visible;
+    }
+    
+    .nav-dropdown {
+      @apply static h-0 overflow-hidden opacity-0 invisible w-full m-0 p-0 transition-all duration-300 rounded-none;
+      box-shadow: none;
+      background: hsla(0 0% 0% / 0.02);
+    }
+    
+    .nav-product.active .nav-dropdown {
+      @apply h-auto opacity-100 visible py-2.5;
+    }
+    
+    .nav-dropdown a {
+      @apply py-3.5 pl-10 pr-5 text-sm text-muted-foreground;
+      border-bottom: 1px solid hsla(0 0% 0% / 0.03);
+    }
+    
+    .desktop-btn {
+      @apply hidden;
+    }
+  }
+  
+  @media (max-width: 768px) {
+    .hero-section {
+      @apply py-8 px-4;
+    }
+    
+    .hero-description {
+      @apply text-left text-sm;
+    }
+    
+    .media-grid {
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      @apply gap-4;
+    }
+    
+    .media-card img {
+      @apply h-[180px];
+    }
+    
+    .shop-slider-container {
+      height: 400px;
+    }
+    
+    .slide-content h3 {
+      @apply text-xl mb-2;
+    }
+    
+    .slide-content p {
+      @apply text-sm;
+    }
+    
+    .slider-btn {
+      @apply w-12 h-12 text-xl;
+    }
+    
+    .shop-slider-title {
+      @apply text-2xl mb-8;
+    }
+    
+    .footer-grid {
+      grid-template-columns: 1fr 1fr;
+      @apply gap-5;
+    }
+    
+    .section-card {
+      @apply p-6;
+    }
+
+    .nav-logo {
+      height: 4rem;
+    }
+  }
+  
+  @media (max-width: 640px) {
+    .shop-slider-container {
+      height: 300px;
+    }
+    
+    .shop-slider-section {
+      @apply px-3;
+    }
+    
+    .slide-content {
+      @apply p-4;
+    }
+    
+    .slider-dot {
+      @apply w-2 h-2;
+    }
+    
+    .slider-dot.active {
+      @apply w-6;
+    }
+    
+    .autoplay-control {
+      @apply px-3 py-1.5 text-sm;
+    }
+  }
+  
+  @media (max-width: 480px) {
+    .nav-container {
+      @apply h-[60px] px-2.5;
+    }
+    
+    .nav-logo {
+      @apply w-[100px];
+    }
+    
+    .media-grid {
+      grid-template-columns: repeat(2, 1fr);
+      @apply gap-3;
+    }
+    
+    .media-card img {
+      @apply h-[160px];
+    }
+    
+    .shop-slider {
+      height: 200px;
+    }
+    
+    .footer-grid {
+      @apply grid-cols-1 text-center gap-6;
+    }
+    
+    .footer-col h4::after {
+      @apply left-1/2 -translate-x-1/2;
+    }
+  }
+  
+  /* ===== REDUCED MOTION ===== */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+    
+    .animate-fade-in,
+    .animate-fade-in-up,
+    .animate-float,
+    .animate-gradient,
+    .slide-content {
+      animation: none !important;
+    }
+  }
+}

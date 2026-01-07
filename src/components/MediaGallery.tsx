@@ -1,31 +1,50 @@
 // components/MediaGallery.tsx
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import { Link } from 'react-router-dom';
 import gsap from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { api } from '@/lib/api';
 
-// Register GSAP plugins
-gsap.registerPlugin(ScrollTrigger);
-
-// Note: Inertia plugin is not included in standard GSAP
-// Remove inertia properties or install the plugin
+// Register GSAP plugins (check if already registered)
 
 const MediaGallery = () => {
   const [popularProducts, setPopularProducts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [hoveredProduct, setHoveredProduct] = useState<string | null>(null);
   const galleryRef = useRef<HTMLDivElement>(null);
   const cardsRef = useRef<(HTMLDivElement | null)[]>([]);
   const animationsInitializedRef = useRef(false);
   const scrollTriggersRef = useRef<ScrollTrigger[]>([]);
   const tweensRef = useRef<gsap.core.Tween[]>([]);
   const timelinesRef = useRef<gsap.core.Timeline[]>([]);
-
+  const mouseMoveRef = useRef<((e: MouseEvent) => void) | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const hoverTimelinesRef = useRef<WeakMap<HTMLElement, gsap.core.Timeline>>(new WeakMap());
+  const velocityRef = useRef({ x: 0, y: 0 });
+  const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // Use React's useId for unique component ID (SSR safe)
+  const componentId = useId().replace(/:/g, '-');
+  
+  // SSR-safe ID generation (client-side only)
+  const galleryIdRef = useRef('');
   useEffect(() => {
+    if (!galleryIdRef.current) {
+      galleryIdRef.current = `gallery-${componentId}-${Math.random().toString(36).substr(2, 9)}`;
+    }
+  }, [componentId]);
+
+  // Fetch products with abort controller
+  useEffect(() => {
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
     const fetchPopularProducts = async () => {
       try {
         setIsLoading(true);
+        
+        // Check if component is still mounted
+        if (signal.aborted) return;
+        
         // First try to get popular products from API
         let data = await api.products.getPopular();
         
@@ -33,6 +52,9 @@ const MediaGallery = () => {
         if (!data || data.length === 0) {
           data = await api.products.getAll();
         }
+        
+        // Check abort again before state update
+        if (signal.aborted) return;
         
         // If no data, use fallback
         if (!data || data.length === 0) {
@@ -43,14 +65,131 @@ const MediaGallery = () => {
           setPopularProducts(shuffled.slice(0, 9));
         }
       } catch (error) {
+        if (signal.aborted) return;
         console.warn('Using fallback products for gallery');
         setPopularProducts(getFallbackProducts());
       } finally {
-        setIsLoading(false);
+        if (!signal.aborted) {
+          setIsLoading(false);
+        }
       }
     };
 
     fetchPopularProducts();
+    
+    // Cleanup function
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  // Set card ref callback with proper cleanup
+  const setCardRef = useCallback((productId: string) => {
+    return (el: HTMLDivElement | null) => {
+      if (!el) {
+        // Clean up when element unmounts
+        cardsRef.current = cardsRef.current.filter(card => 
+          card?.dataset.productId !== productId
+        );
+        return;
+      }
+      
+      // Find existing card with same product ID
+      const existingIndex = cardsRef.current.findIndex(
+        card => card?.dataset.productId === productId
+      );
+      
+      if (existingIndex > -1) {
+        cardsRef.current[existingIndex] = el;
+      } else {
+        cardsRef.current.push(el);
+        el.dataset.productId = productId;
+      }
+    };
+  }, []);
+
+  // Event delegation for hover effects
+  const handleGalleryMouseEnter = useCallback((e: MouseEvent) => {
+    const card = (e.target as Element).closest('.media-card');
+    if (!card || !galleryRef.current?.contains(card)) return;
+    
+    const image = card.querySelector('img');
+    if (!image) return;
+    
+    // Kill any existing timeline for this card
+    const existingTimeline = hoverTimelinesRef.current.get(card as HTMLElement);
+    if (existingTimeline) {
+      existingTimeline.kill();
+    }
+    
+    // Card shadow
+    const shadowTween = gsap.to(card, {
+      boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15)',
+      duration: 0.3,
+      ease: 'power2.out'
+    });
+    tweensRef.current.push(shadowTween);
+    
+    // Image animation with velocity
+    const timeline = gsap.timeline();
+    
+    // Scale up with simulated inertia
+    timeline.to(image, {
+      duration: 0.5,
+      scale: 1.1,
+      ease: 'power2.out',
+      x: velocityRef.current.x * 0.5,
+      y: velocityRef.current.y * 0.5,
+    });
+    
+    // Add slight rotation for dynamic effect
+    timeline.to(image, {
+      duration: 0.4,
+      rotate: (Math.random() - 0.5) * 15,
+      yoyo: true,
+      repeat: 1,
+      ease: 'power1.inOut'
+    }, '<');
+    
+    hoverTimelinesRef.current.set(card as HTMLElement, timeline);
+    timelinesRef.current.push(timeline);
+  }, []);
+
+  const handleGalleryMouseLeave = useCallback((e: MouseEvent) => {
+    const card = (e.target as Element).closest('.media-card');
+    if (!card || !galleryRef.current?.contains(card)) return;
+    
+    const image = card.querySelector('img');
+    
+    // Reset card shadow
+    const resetShadowTween = gsap.to(card, {
+      boxShadow: '0 4px 6px rgba(0, 0, 0, 0.05)',
+      duration: 0.3,
+      ease: 'power2.out'
+    });
+    tweensRef.current.push(resetShadowTween);
+    
+    // Reset image
+    if (image) {
+      const resetImageTween = gsap.to(image, {
+        scale: 1,
+        x: 0,
+        y: 0,
+        rotate: 0,
+        duration: 0.3,
+        ease: 'power2.out'
+      });
+      tweensRef.current.push(resetImageTween);
+    }
+    
+    // Kill and remove timeline
+    const existingTimeline = hoverTimelinesRef.current.get(card as HTMLElement);
+    if (existingTimeline) {
+      existingTimeline.kill();
+      hoverTimelinesRef.current.delete(card as HTMLElement);
+    }
   }, []);
 
   // Initialize animations after products are loaded
@@ -65,71 +204,100 @@ const MediaGallery = () => {
     // Clean up any existing animations specific to this component
     cleanupAnimations();
     
+    // Set gallery ID if not set
+    if (galleryRef.current && !galleryRef.current.id) {
+      galleryRef.current.id = galleryIdRef.current;
+    }
+    
     // Only run GSAP animations on desktop
     if (window.innerWidth > 768 && galleryRef.current) {
-      // Get unique IDs for this component's elements
-      const galleryId = `gallery-${Date.now()}`;
-      galleryRef.current.id = galleryId;
+      // Setup mouse tracking for hover velocity
+      setupMouseTracking();
+      
+      // Setup event delegation for hover effects
+      const gallery = galleryRef.current;
+      gallery.addEventListener('mouseenter', handleGalleryMouseEnter, true);
+      gallery.addEventListener('mouseleave', handleGalleryMouseLeave, true);
       
       // Gallery header animation
-      const headerTween = gsap.from(`#${galleryId} .gallery-header`, {
-        y: 30,
-        opacity: 0,
-        duration: 0.8,
-        ease: 'power2.out',
-        scrollTrigger: {
-          trigger: `#${galleryId}`,
-          start: 'top 80%',
-          end: 'bottom 20%',
-          once: true,
-          markers: false,
-          id: 'gallery-header-anim',
-        },
+      const headerTrigger = ScrollTrigger.create({
+        trigger: `#${galleryIdRef.current} .gallery-header`,
+        start: 'top 80%',
+        end: 'bottom 20%',
+        once: true,
+        markers: false,
+        id: `${galleryIdRef.current}-header`,
+        onEnter: () => {
+          const tween = gsap.from(`#${galleryIdRef.current} .gallery-header`, {
+            y: 30,
+            opacity: 0,
+            duration: 0.8,
+            ease: 'power2.out',
+            onComplete: () => {
+              // Clean up after completion
+              tweensRef.current = tweensRef.current.filter(t => t !== tween);
+              tween.kill();
+            }
+          });
+          tweensRef.current.push(tween);
+        }
       });
-      tweensRef.current.push(headerTween);
+      scrollTriggersRef.current.push(headerTrigger);
 
       // Product cards stagger animation
-      const cards = gsap.utils.toArray(`#${galleryId} .media-card`);
-      const cardsTween = gsap.from(cards, {
-        y: 50,
-        opacity: 0,
-        duration: 0.6,
-        stagger: 0.1,
-        ease: 'back.out(1.7)',
-        scrollTrigger: {
-          trigger: `#${galleryId}`,
-          start: 'top 75%',
-          end: 'bottom 25%',
-          once: true,
-          toggleActions: 'play none none none',
-          id: 'cards-stagger-anim',
-        },
+      const cardsTrigger = ScrollTrigger.create({
+        trigger: `#${galleryIdRef.current}`,
+        start: 'top 75%',
+        end: 'bottom 25%',
+        once: true,
+        toggleActions: 'play none none none',
+        id: `${galleryIdRef.current}-cards`,
+        onEnter: () => {
+          const cards = gsap.utils.toArray(`#${galleryIdRef.current} .media-card`);
+          const tween = gsap.from(cards, {
+            y: 50,
+            opacity: 0,
+            duration: 0.6,
+            stagger: 0.1,
+            ease: 'back.out(1.7)',
+            onComplete: () => {
+              // Clean up after completion
+              tweensRef.current = tweensRef.current.filter(t => t !== tween);
+              tween.kill();
+            }
+          });
+          tweensRef.current.push(tween);
+        }
       });
-      tweensRef.current.push(cardsTween);
+      scrollTriggersRef.current.push(cardsTrigger);
 
       // View more button animation
-      const buttonTween = gsap.from(`#${galleryId} .view-more-btn`, {
-        y: 30,
-        opacity: 0,
-        duration: 0.8,
-        delay: 0.5,
-        ease: 'power2.out',
-        scrollTrigger: {
-          trigger: `#${galleryId}`,
-          start: 'top 70%',
-          end: 'bottom 30%',
-          once: true,
-          id: 'button-anim',
-        },
+      const buttonTrigger = ScrollTrigger.create({
+        trigger: `#${galleryIdRef.current}`,
+        start: 'top 70%',
+        end: 'bottom 30%',
+        once: true,
+        id: `${galleryIdRef.current}-button`,
+        onEnter: () => {
+          const tween = gsap.from(`#${galleryIdRef.current} .view-more-btn`, {
+            y: 30,
+            opacity: 0,
+            duration: 0.8,
+            delay: 0.5,
+            ease: 'power2.out',
+            onComplete: () => {
+              // Clean up after completion
+              tweensRef.current = tweensRef.current.filter(t => t !== tween);
+              tween.kill();
+            }
+          });
+          tweensRef.current.push(tween);
+        }
       });
-      tweensRef.current.push(buttonTween);
-
-      // Store all scroll triggers
-      scrollTriggersRef.current = ScrollTrigger.getAll().filter(trigger => 
-        trigger.vars.id?.includes('anim')
-      );
+      scrollTriggersRef.current.push(buttonTrigger);
 
       // Add subtle floating animation to cards (no ScrollTrigger)
+      const cards = gsap.utils.toArray(`#${galleryIdRef.current} .media-card`);
       cards.forEach((card: any, index: number) => {
         const floatTween = gsap.to(card, {
           y: -5,
@@ -142,153 +310,57 @@ const MediaGallery = () => {
         });
         tweensRef.current.push(floatTween);
       });
-
-      // Setup hover effects for desktop WITHOUT inertia
-      setupHoverEffects(galleryId);
     } else {
-      // Mobile: Simple fade in for cards
+      // Mobile: Use GSAP for consistent transforms
       cardsRef.current.forEach((card, index) => {
         if (card) {
-          card.style.opacity = '0';
-          card.style.transform = 'translateY(20px)';
-          
-          // Use requestAnimationFrame for smoother animations
-          requestAnimationFrame(() => {
-            setTimeout(() => {
-              if (card) {
-                card.style.transition = 'opacity 0.5s ease, transform 0.5s ease';
-                card.style.opacity = '1';
-                card.style.transform = 'translateY(0)';
-              }
-            }, index * 100);
+          // Reset to default state
+          gsap.set(card, { 
+            y: 0,
+            x: 0,
+            rotate: 0,
+            scale: 1,
+            opacity: 0
           });
+          
+          // Animate in with GSAP
+          const tween = gsap.to(card, {
+            y: 0,
+            opacity: 1,
+            duration: 0.5,
+            delay: index * 0.1,
+            ease: 'power2.out'
+          });
+          tweensRef.current.push(tween);
         }
       });
     }
   };
 
-  const setupHoverEffects = (galleryId: string) => {
-    // Track mouse movement for smooth hover effect
-    let mouseX = 0, mouseY = 0;
-    let lastX = 0, lastY = 0;
-    let velocityX = 0, velocityY = 0;
-    let animationFrame: number;
-    
+  const setupMouseTracking = () => {
     const updateMousePosition = (e: MouseEvent) => {
-      const newX = e.clientX;
-      const newY = e.clientY;
-      
-      // Calculate velocity based on mouse movement
-      velocityX = newX - lastX;
-      velocityY = newY - lastY;
-      
-      lastX = newX;
-      lastY = newY;
-      mouseX = newX;
-      mouseY = newY;
+      // Store velocity for hover effects
+      velocityRef.current.x = e.movementX;
+      velocityRef.current.y = e.movementY;
     };
     
-    document.addEventListener("mousemove", updateMousePosition);
-
-    // Add hover effects to cards within this gallery only
-    const cards = document.querySelectorAll(`#${galleryId} .media-card`);
-    cards.forEach(card => {
-      const image = card.querySelector('img');
-      let hoverTimeline: gsap.core.Timeline | null = null;
-      
-      const mouseEnterHandler = () => {
-        const productId = (card as HTMLElement).dataset.productId;
-        if (productId) setHoveredProduct(productId);
-        
-        // Card shadow with specific scope
-        const shadowTween = gsap.to(card, {
-          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15)',
-          duration: 0.3,
-          ease: 'power2.out'
-        });
-        tweensRef.current.push(shadowTween);
-        
-        // Image scale with smooth animation (no inertia plugin)
-        if (image) {
-          // Kill any existing timeline
-          if (hoverTimeline) {
-            hoverTimeline.kill();
-          }
-          
-          hoverTimeline = gsap.timeline();
-          
-          // Scale up
-          hoverTimeline.to(image, {
-            duration: 0.5,
-            scale: 1.1,
-            ease: 'power2.out',
-            x: velocityX * 0.5, // Simulated inertia effect
-            y: velocityY * 0.5,
-          });
-          
-          // Add slight rotation for dynamic effect
-          hoverTimeline.to(image, {
-            duration: 0.4,
-            rotate: (Math.random() - 0.5) * 15,
-            yoyo: true,
-            repeat: 1,
-            ease: 'power1.inOut'
-          }, '<');
-          
-          timelinesRef.current.push(hoverTimeline);
-        }
-      };
-      
-      const mouseLeaveHandler = () => {
-        const productId = (card as HTMLElement).dataset.productId;
-        if (productId === hoveredProduct) setHoveredProduct(null);
-        
-        // Reset card shadow
-        const resetShadowTween = gsap.to(card, {
-          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.05)',
-          duration: 0.3,
-          ease: 'power2.out'
-        });
-        tweensRef.current.push(resetShadowTween);
-        
-        // Reset image
-        if (image) {
-          const resetImageTween = gsap.to(image, {
-            scale: 1,
-            x: 0,
-            y: 0,
-            rotate: 0,
-            duration: 0.3,
-            ease: 'power2.out'
-          });
-          tweensRef.current.push(resetImageTween);
-        }
-        
-        // Kill hover timeline
-        if (hoverTimeline) {
-          hoverTimeline.kill();
-          hoverTimeline = null;
-        }
-      };
-      
-      card.addEventListener('mouseenter', mouseEnterHandler);
-      card.addEventListener('mouseleave', mouseLeaveHandler);
-      
-      // Store handlers for cleanup
-      (card as any)._mouseEnterHandler = mouseEnterHandler;
-      (card as any)._mouseLeaveHandler = mouseLeaveHandler;
-      (card as any)._mouseMoveHandler = updateMousePosition;
-    });
+    // Only add listener if not already added
+    if (!mouseMoveRef.current) {
+      mouseMoveRef.current = updateMousePosition;
+      document.addEventListener("mousemove", mouseMoveRef.current);
+    }
     
-    // Animation loop for smooth updates (optional)
+    // Start animation loop only if needed for effects
     const animate = () => {
-      // You can use velocityX and velocityY here for continuous effects
-      animationFrame = requestAnimationFrame(animate);
+      // Optional: Use velocity for continuous effects
+      // Currently not used but kept for future extensibility
+      animationFrameRef.current = requestAnimationFrame(animate);
     };
-    animate();
     
-    // Store animation frame for cleanup
-    (document as any)._galleryAnimationFrame = animationFrame;
+    // Only start loop if we're actually using it
+    if (animationFrameRef.current === null) {
+      animationFrameRef.current = requestAnimationFrame(animate);
+    }
   };
 
   const cleanupAnimations = () => {
@@ -316,31 +388,34 @@ const MediaGallery = () => {
     });
     scrollTriggersRef.current = [];
 
-    // Remove all event listeners from cards
+    // Remove mouse move listener
+    if (mouseMoveRef.current) {
+      document.removeEventListener("mousemove", mouseMoveRef.current);
+      mouseMoveRef.current = null;
+    }
+
+    // Cancel animation frame
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    // Remove event delegation listeners
     if (galleryRef.current) {
+      galleryRef.current.removeEventListener('mouseenter', handleGalleryMouseEnter, true);
+      galleryRef.current.removeEventListener('mouseleave', handleGalleryMouseLeave, true);
+      
+      // Clear hover timelines
       const cards = galleryRef.current.querySelectorAll('.media-card');
       cards.forEach(card => {
-        if ((card as any)._mouseEnterHandler) {
-          card.removeEventListener('mouseenter', (card as any)._mouseEnterHandler);
-        }
-        if ((card as any)._mouseLeaveHandler) {
-          card.removeEventListener('mouseleave', (card as any)._mouseLeaveHandler);
-        }
-        if ((card as any)._mouseMoveHandler) {
-          document.removeEventListener('mousemove', (card as any)._mouseMoveHandler);
-        }
+        hoverTimelinesRef.current.delete(card as HTMLElement);
       });
-    }
-    
-    // Cancel animation frame
-    if ((document as any)._galleryAnimationFrame) {
-      cancelAnimationFrame((document as any)._galleryAnimationFrame);
     }
   };
 
   // Handle window resize for responsive animations
   useEffect(() => {
-    let resizeTimeout: NodeJS.Timeout;
+    let resizeTimeout: ReturnType<typeof setTimeout>;
 
     const handleResize = () => {
       clearTimeout(resizeTimeout);
@@ -352,9 +427,9 @@ const MediaGallery = () => {
         if (galleryRef.current) {
           const cards = galleryRef.current.querySelectorAll('.media-card');
           cards.forEach(card => {
-            (card as HTMLElement).style.transform = '';
-            (card as HTMLElement).style.boxShadow = '';
-            gsap.set(card, { clearProps: 'all' });
+            gsap.set(card, { 
+              clearProps: 'boxShadow,rotate,x,y,scale' 
+            });
           });
         }
         
@@ -376,14 +451,19 @@ const MediaGallery = () => {
       clearTimeout(resizeTimeout);
       cleanupAnimations();
       
-      // Remove any remaining GSAP animations
+      // Cancel API request
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      
+      // Remove any remaining GSAP animations for this gallery
       if (galleryRef.current && galleryRef.current.id) {
         gsap.killTweensOf(`#${galleryRef.current.id} .media-card`);
         gsap.killTweensOf(`#${galleryRef.current.id} .gallery-header`);
-        gsap.killTweensOf(`#${galleryRef.current.id} .view-more-btn`);
+        gsap.killTweensOf(`#${galleryIdRef.current} .view-more-btn`);
       }
     };
-  }, [isLoading]);
+  }, [isLoading, handleGalleryMouseEnter, handleGalleryMouseLeave]);
 
   // Fallback products
   const getFallbackProducts = () => {
@@ -465,16 +545,16 @@ const MediaGallery = () => {
       ) : (
         <>
           <div className="media-grid">
-            {popularProducts.map((product, index) => (
+            {popularProducts.map((product) => (
               <Link 
                 key={product._id} 
                 to={product._id.includes('fallback') ? '/products' : `/products/${product._id}`}
                 className="block"
               >
                 <div 
-                  ref={el => cardsRef.current[index] = el}
+                  ref={setCardRef(product._id)}
                   data-product-id={product._id}
-                  className={`media-card group relative overflow-hidden ${hoveredProduct === product._id ? 'ring-2 ring-primary ring-offset-2' : ''}`}
+                  className="media-card group relative overflow-hidden"
                 >
                   {/* Product Image */}
                   <div className="relative overflow-hidden rounded-lg">
@@ -482,7 +562,7 @@ const MediaGallery = () => {
                       src={product.image}
                       alt={product.name}
                       loading="lazy"
-                      className="w-full h-48 object-cover transition-transform duration-500 group-hover:scale-110"
+                      className="w-full h-48 object-cover will-change-transform transform-gpu origin-center"
                     />
                     
                     {/* Discount Badge */}

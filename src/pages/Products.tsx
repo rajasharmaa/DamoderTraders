@@ -27,7 +27,17 @@ const Products = () => {
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
 
-  // Define categoryOptions here, before useMemo hooks
+  // Sync URL params with state
+  useEffect(() => {
+    const categoryFromURL = searchParams.get('category');
+    if (categoryFromURL) {
+      setSelectedCategory(categoryFromURL);
+    } else {
+      setSelectedCategory('all');
+    }
+  }, [searchParams]);
+
+  // Define categoryOptions
   const categoryOptions = [
     { value: 'all', label: 'All Products', icon: Package, color: 'bg-gray-900 text-white' },
     { value: 'pipes', label: 'Pipes', icon: Layers, color: 'bg-blue-600 text-white' },
@@ -35,6 +45,11 @@ const Products = () => {
     { value: 'valves', label: 'Valves', icon: Filter, color: 'bg-red-600 text-white' },
     { value: 'other', label: 'Accessories', icon: Zap, color: 'bg-amber-600 text-white' },
   ];
+
+  // Helper function to normalize category strings
+  const normalizeCategory = (category: string): string => {
+    return category.toLowerCase().replace(/[^a-z0-9]/g, '');
+  };
 
   // Filter products based on search and category
   const filteredProducts = useMemo(() => {
@@ -46,13 +61,13 @@ const Products = () => {
         (product.description && product.description.toLowerCase().includes(searchQuery.toLowerCase()));
       
       const matchesCategory = selectedCategory === 'all' || 
-        (product.category && product.category.toLowerCase() === selectedCategory.toLowerCase());
+        (product.category && normalizeCategory(product.category) === normalizeCategory(selectedCategory));
       
       return matchesSearch && matchesCategory;
     });
   }, [allProducts, searchQuery, selectedCategory]);
 
-  // Calculate category counts
+  // Calculate category counts efficiently
   const categoryCounts = useMemo(() => {
     if (!allProducts || allProducts.length === 0) {
       return {
@@ -66,76 +81,86 @@ const Products = () => {
     
     const counts: Record<string, number> = { all: allProducts.length };
     
+    // Initialize all category counts
     categoryOptions.forEach(option => {
       if (option.value !== 'all') {
-        counts[option.value] = allProducts.filter(
-          product => product.category && product.category.toLowerCase() === option.value
-        ).length;
+        counts[option.value] = 0;
+      }
+    });
+    
+    // Single pass through products
+    allProducts.forEach(product => {
+      if (product.category) {
+        const normalizedCategory = normalizeCategory(product.category);
+        const matchedOption = categoryOptions.find(
+          opt => opt.value !== 'all' && normalizeCategory(opt.value) === normalizedCategory
+        );
+        if (matchedOption) {
+          counts[matchedOption.value] = (counts[matchedOption.value] || 0) + 1;
+        } else {
+          counts.other = (counts.other || 0) + 1;
+        }
       }
     });
     
     return counts;
-  }, [allProducts, categoryOptions]); // Add categoryOptions to dependencies
+  }, [allProducts]);
 
   const getCategoryColor = (category: string) => {
-    const option = categoryOptions.find(opt => opt.value === category.toLowerCase());
-    return option?.color || 'bg-gray-600 text-white';
+    const normalizedCategory = normalizeCategory(category);
+    const option = categoryOptions.find(opt => 
+      opt.value !== 'all' && normalizeCategory(opt.value) === normalizedCategory
+    );
+    return option?.color || 'bg-amber-600 text-white';
+  };
+
+  const fetchAllProducts = async () => {
+    setIsLoading(true);
+    try {
+      const response = await api.products.getAll();
+      
+      // Validate response
+      if (!response || !Array.isArray(response)) {
+        throw new Error('Invalid data format received from API');
+      }
+      
+      // Filter out products without ID and map safely
+      const validProducts = response
+        .filter(product => product?._id || product?.id)
+        .map((product: any) => ({
+          _id: product._id || product.id,
+          name: product.name || 'Unnamed Product',
+          category: product.category || 'other',
+          image: product.image || 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
+          description: product.description || 'Premium industrial product with superior quality and durability.',
+        }));
+      
+      setAllProducts(validProducts);
+      
+      if (validProducts.length === 0) {
+        toast({
+          title: 'No Products',
+          description: 'Currently no products available in our catalog.',
+          variant: 'default',
+        });
+      }
+      
+    } catch (error: any) {
+      console.error('Error fetching products:', error);
+      toast({
+        title: 'Error Loading Products',
+        description: error.message || 'Failed to load products. Please try again later.',
+        variant: 'destructive',
+      });
+      setAllProducts([]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
-    const fetchAllProducts = async () => {
-      try {
-        setIsLoading(true);
-        let data: any[] = [];
-        
-        // Try to fetch all products
-        try {
-          const response = await api.products.getAll();
-          data = Array.isArray(response) ? response : [];
-        } catch (fetchError) {
-          console.error('Error fetching products:', fetchError);
-          data = [];
-        }
-        
-        // Log for debugging
-        console.log('Fetched products data:', data);
-        
-        // Check if data exists and is an array
-        if (!data || !Array.isArray(data)) {
-          console.warn('Invalid data format received:', data);
-          data = [];
-        }
-        
-        // Safely map products with null checks
-        const enhancedProducts = (data || []).map((product: any) => ({
-          _id: product?._id || product?.id || `product-${Math.random().toString(36).substr(2, 9)}`,
-          name: product?.name || 'Unnamed Product',
-          category: product?.category || 'other',
-          image: product?.image || 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80',
-          description: product?.description || 'Premium industrial product with superior quality and durability.',
-        }));
-        
-        setAllProducts(enhancedProducts);
-        
-        if (enhancedProducts.length === 0) {
-          console.warn('No products loaded. Check API connection or data.');
-        }
-        
-      } catch (error: any) {
-        console.error('Unexpected error in fetchAllProducts:', error);
-        toast({
-          title: 'Error',
-          description: 'Failed to load products. Please try again later.',
-          variant: 'destructive',
-        });
-        setAllProducts([]);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
     fetchAllProducts();
-  }, [toast]);
+  }, []);
 
   return (
     <>
@@ -149,6 +174,11 @@ const Products = () => {
           name="description"
           content="Browse our premium catalog of industrial pipes, fittings, valves, and accessories. Superior quality products for industrial excellence."
         />
+        <meta property="og:title" content={categoryParam ? `${categoryParam} Products` : 'Industrial Products'} />
+        <meta property="og:description" content="Premium industrial products for superior performance and durability." />
+        <meta property="og:image" content="https://damodartraders.com/og-products.jpg" />
+        <meta property="og:url" content={`https://damodartraders.com/products${categoryParam ? `?category=${categoryParam}` : ''}`} />
+        <link rel="canonical" href={`https://damodartraders.com/products${categoryParam ? `?category=${categoryParam}` : ''}`} />
       </Helmet>
 
       <IndustrialBackground />
@@ -183,18 +213,24 @@ const Products = () => {
         >
           <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-2 max-w-3xl mx-auto">
             <div className="relative">
-              <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-gray-400" size={22} />
+              <label htmlFor="product-search" className="sr-only">
+                Search industrial products
+              </label>
+              <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-gray-400" size={22} aria-hidden="true" />
               <input
+                id="product-search"
                 type="text"
                 placeholder="Search industrial products, pipes, valves, fittings..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-14 pr-6 py-4 rounded-xl text-lg focus:outline-none"
+                aria-label="Search products"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
                   className="absolute right-5 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  aria-label="Clear search"
                 >
                   ×
                 </button>
@@ -219,13 +255,15 @@ const Products = () => {
                 <button
                   key={option.value}
                   onClick={() => setSelectedCategory(option.value)}
+                  aria-pressed={selectedCategory === option.value}
+                  aria-label={`Filter by ${option.label}, ${count} products available`}
                   className={`px-5 py-3 rounded-xl font-semibold transition-all duration-300 flex items-center gap-3 ${
                     selectedCategory === option.value 
                       ? option.color + ' shadow-lg' 
                       : 'bg-white text-gray-700 hover:shadow-md border border-gray-200'
                   }`}
                 >
-                  <Icon size={20} />
+                  <Icon size={20} aria-hidden="true" />
                   <span>{option.label}</span>
                   <span className={`text-sm px-2.5 py-0.5 rounded-full ${
                     selectedCategory === option.value 
@@ -247,10 +285,27 @@ const Products = () => {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3 }}
         >
-          <div className="flex items-center justify-center">
-            <h3 className="text-2xl font-bold text-gray-900">
-              {filteredProducts.length} Products Available
+          <div className="flex items-center justify-center flex-col">
+            <h3 className="text-2xl font-bold text-gray-900 text-center">
+              {searchQuery || selectedCategory !== 'all' ? (
+                <>
+                  Showing <span className="text-primary">{filteredProducts.length}</span> of{' '}
+                  <span className="text-gray-600">{allProducts.length}</span> products
+                </>
+              ) : (
+                <>
+                  <span className="text-primary">{allProducts.length}</span> Products Available
+                </>
+              )}
             </h3>
+            {(searchQuery || selectedCategory !== 'all') && filteredProducts.length > 0 && (
+              <p className="text-center text-gray-600 mt-2 text-sm">
+                {searchQuery && <>Matching "{searchQuery}" · </>}
+                {selectedCategory !== 'all' && (
+                  <>Filtered by {categoryOptions.find(o => o.value === selectedCategory)?.label}</>
+                )}
+              </p>
+            )}
           </div>
         </motion.div>
 
@@ -274,7 +329,7 @@ const Products = () => {
                 animate={{ opacity: 1, scale: 1 }}
               >
                 <div className="w-24 h-24 mx-auto mb-8 rounded-full bg-gray-100 flex items-center justify-center">
-                  <Search className="w-12 h-12 text-gray-400" />
+                  <Search className="w-12 h-12 text-gray-400" aria-hidden="true" />
                 </div>
                 <h3 className="text-2xl font-bold text-gray-900 mb-4">No Products Available</h3>
                 <p className="text-gray-600 max-w-md mx-auto mb-10 text-lg">
@@ -283,6 +338,7 @@ const Products = () => {
                 <Link
                   to="/contact"
                   className="px-8 py-3.5 bg-primary text-white rounded-xl font-semibold hover:bg-primary/90 transition-all duration-300 inline-block"
+                  aria-label="Contact us for product information"
                 >
                   Contact Us
                 </Link>
@@ -294,7 +350,7 @@ const Products = () => {
                 animate={{ opacity: 1, scale: 1 }}
               >
                 <div className="w-24 h-24 mx-auto mb-8 rounded-full bg-gray-100 flex items-center justify-center">
-                  <Search className="w-12 h-12 text-gray-400" />
+                  <Search className="w-12 h-12 text-gray-400" aria-hidden="true" />
                 </div>
                 <h3 className="text-2xl font-bold text-gray-900 mb-4">No Products Found</h3>
                 <p className="text-gray-600 max-w-md mx-auto mb-10 text-lg">
@@ -306,6 +362,7 @@ const Products = () => {
                     setSelectedCategory('all');
                   }}
                   className="px-8 py-3.5 bg-primary text-white rounded-xl font-semibold hover:bg-primary/90 transition-all duration-300"
+                  aria-label="Browse all products"
                 >
                   Browse All Products
                 </button>
@@ -315,18 +372,17 @@ const Products = () => {
                 className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                transition={{ staggerChildren: 0.05 }}
               >
                 {filteredProducts.map((product) => (
-                  <motion.div
+                  <div
                     key={product._id}
-                    initial={{ y: 20, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ duration: 0.3 }}
-                    whileHover={{ y: -5 }}
+                    className="group"
                   >
-                    <Link to={`/products/${product._id}`}>
-                      <div className="bg-white rounded-2xl overflow-hidden border border-gray-200 shadow-sm hover:shadow-xl transition-all duration-300 h-full flex flex-col group">
+                    <Link 
+                      to={`/products/${product._id}`}
+                      aria-label={`View details for ${product.name}`}
+                    >
+                      <div className="bg-white rounded-2xl overflow-hidden border border-gray-200 shadow-sm hover:shadow-xl transition-all duration-300 h-full flex flex-col transform hover:-translate-y-1">
                         {/* Product Image */}
                         <div className="relative h-56 overflow-hidden">
                           <img 
@@ -369,7 +425,7 @@ const Products = () => {
                         </div>
                       </div>
                     </Link>
-                  </motion.div>
+                  </div>
                 ))}
               </motion.div>
             )}
@@ -395,12 +451,14 @@ const Products = () => {
                   <Link
                     to="/contact"
                     className="px-10 py-4 bg-primary text-white rounded-xl font-semibold hover:bg-primary/90 transition-all duration-300"
+                    aria-label="Request custom quote"
                   >
                     Request Custom Quote
                   </Link>
                   <Link
                     to="/categories"
                     className="px-10 py-4 bg-white border-2 border-primary text-primary rounded-xl font-semibold hover:bg-primary/5 transition-all duration-300"
+                    aria-label="Browse more categories"
                   >
                     Browse More Categories
                   </Link>
