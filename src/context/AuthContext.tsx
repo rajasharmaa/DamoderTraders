@@ -199,28 +199,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       api.utils.clearAuthCache();
       
-      // ✅ FIXED: API returns User directly, not wrapped
-      const user = await Promise.race([
+      // ✅ FIXED: Handle the actual API response which includes rememberToken
+      // Backend returns: { user: User, message: string, rememberToken?: string }
+      const loginResponse = await Promise.race([
         api.auth.login({ email, password, rememberMe }),
         timeoutPromise
-      ]) as User;
+      ]) as any; // Temporary type until api.ts is fixed
+      
+      // Extract user and rememberToken from response
+      const user = loginResponse.user;
+      const rememberToken = loginResponse.rememberToken;
       
       if (loginTimeoutRef.current) {
         clearTimeout(loginTimeoutRef.current);
         loginTimeoutRef.current = undefined;
       }
       
-      // Get remember token separately if needed
-      let rememberToken: string | undefined;
-      if (rememberMe) {
-        try {
-          const tokenResponse = await api.auth.refreshRememberToken();
-          rememberToken = tokenResponse.rememberToken;
-          localStorage.setItem(REMEMBER_TOKEN_KEY, rememberToken);
-        } catch (error) {
-          console.warn('Could not get remember token:', error);
-        }
-      } else {
+      // ✅ FIXED: Store remember token if provided in login response
+      // Backend login API already returns rememberToken when rememberMe = true
+      if (rememberMe && rememberToken) {
+        localStorage.setItem(REMEMBER_TOKEN_KEY, rememberToken);
+      } else if (!rememberMe) {
         localStorage.removeItem(REMEMBER_TOKEN_KEY);
       }
       
