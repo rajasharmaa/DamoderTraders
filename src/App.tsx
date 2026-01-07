@@ -1,6 +1,6 @@
-// App.tsx
 import { lazy, Suspense } from "react";
-import { HelmetProvider } from 'react-helmet-async'; // Add this import
+import { HelmetProvider } from 'react-helmet-async';
+
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -44,23 +44,17 @@ const queryClient = new QueryClient({
 // Loading fallback component
 const PageLoader = () => (
   <div className="flex items-center justify-center min-h-screen">
-    <LoadingSpinner /> {/* You can replace with your custom spinner */}
+    <LoadingSpinner />
     <span className="ml-2">Loading...</span>
   </div>
 );
 
 const App = () => (
-  <HelmetProvider> {/* Wrap everything with HelmetProvider */}
+  <HelmetProvider>
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        {/* Toaster configuration - uncomment one based on your preference */}
-        {/* Option 1: Use only one toaster */}
         <Toaster />
-        {/* <Sonner /> */}
-        
-        {/* Option 2: Configure to avoid duplicates */}
-        {/* <Toaster position="top-right" />
-        <Sonner position="bottom-right" /> */}
+        {/* <Sonner /> Uncomment if needed */}
         
         <BrowserRouter 
           // Remove future flags if you have React Router < 6.21.0

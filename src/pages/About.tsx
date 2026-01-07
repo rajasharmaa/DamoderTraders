@@ -395,7 +395,7 @@ const About = () => {
                     
                     <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl shadow-2xl">
                       <img
-                        src="public\Screenshot 2026-01-01 191041.png"
+                        src="\Screenshot 2026-01-01 191041.png"
                         alt="Damodar Prasad Sharma - Founder & CEO"
                         className="w-full h-64 sm:h-80 md:h-96 object-cover group-hover:scale-105 transition-transform duration-500"
                       />
