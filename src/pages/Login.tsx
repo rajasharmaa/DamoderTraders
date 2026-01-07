@@ -248,13 +248,7 @@ const Login = () => {
                 </span>
               </button>
               
-              <button
-                type="button"
-                onClick={handleDemoLogin}
-                className="text-sm text-blue-600 hover:text-blue-800 transition-colors underline"
-              >
-                Try Demo
-              </button>
+             
             </div>
 
             <button
