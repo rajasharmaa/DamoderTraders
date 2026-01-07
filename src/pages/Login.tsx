@@ -77,7 +77,7 @@ const Login = () => {
         duration: 3000,
       });
       
-      const from = location.state?.from || '/index';
+      const from = location.state?.from || '/Index';
       navigate(from, { replace: true });
     } catch (err: any) {
       console.error('Login error details:', err);
@@ -248,7 +248,13 @@ const Login = () => {
                 </span>
               </button>
               
-             
+              <button
+                type="button"
+                onClick={handleDemoLogin}
+                className="text-sm text-blue-600 hover:text-blue-800 transition-colors underline"
+              >
+                Try Demo
+              </button>
             </div>
 
             <button
