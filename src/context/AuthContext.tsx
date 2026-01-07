@@ -10,13 +10,14 @@ interface User {
   role: string;
 }
 
-// ✅ FIXED: Simplified interfaces to match API response
 interface LoginResponse {
+  message: string;
   user: User;
   rememberToken?: string;
 }
 
 interface RegisterResponse {
+  message: string;
   user: User;
 }
 
@@ -69,10 +70,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRememberMeState(value);
     if (typeof window !== 'undefined') {
       localStorage.setItem(REMEMBER_ME_KEY, value.toString());
+      console.log('✅ Remember me preference saved:', value);
     }
   }, []);
 
   const clearAuth = useCallback(() => {
+    console.log('🧹 Clearing authentication data...');
     setUser(null);
     setIsAuthenticated(false);
     setError(null);
@@ -84,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkAuth = useCallback(async (): Promise<boolean> => {
     if (authCheckInProgress.current && authCheckPromise.current) {
+      console.log('🔐 Auth check already in progress, returning existing promise');
       return authCheckPromise.current;
     }
     
@@ -92,13 +96,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const authPromise = (async () => {
       try {
         const rememberToken = localStorage.getItem(REMEMBER_TOKEN_KEY);
+        console.log('🔐 Auth check - Remember token exists:', !!rememberToken);
+        console.log('🔐 Auth check - Token length:', rememberToken?.length);
+        console.log('🔐 Auth check - Remember me preference:', localStorage.getItem(REMEMBER_ME_KEY));
+        
         let authParams = {};
         
-        if (rememberToken) {
+        if (rememberToken && rememberToken.length === 36) {
           authParams = { rememberToken };
+          console.log('🔐 Using remember token for authentication');
         }
         
         const data = await api.auth.status(authParams) as AuthStatusResponse;
+        console.log('🔐 Auth response:', {
+          authenticated: data?.authenticated,
+          fromRememberToken: data?.fromRememberToken,
+          user: data?.user?.email
+        });
         
         if (data?.authenticated && data.user) {
           setUser(data.user);
@@ -106,21 +120,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setError(null);
           
           if (data.fromRememberToken && rememberToken) {
-            console.log('Logged in via remember token');
+            console.log('✅ Logged in via remember token');
           }
           
           return true;
         } else {
+          console.log('❌ Not authenticated or user not found');
           clearAuth();
           return false;
         }
-      } catch (error) {
-        if (error instanceof Error && (
-          error.message === 'SESSION_EXPIRED' ||
-          error.message === 'AUTHENTICATION_FAILED' ||
-          error.message === 'FORBIDDEN' ||
-          error.message === 'INVALID_REMEMBER_TOKEN'
-        )) {
+      } catch (error: any) {
+        console.error('🔐 Auth check error:', error.message);
+        
+        // Clear invalid token
+        localStorage.removeItem(REMEMBER_TOKEN_KEY);
+        
+        if (error.message === 'SESSION_EXPIRED' ||
+            error.message === 'AUTHENTICATION_FAILED' ||
+            error.message === 'FORBIDDEN' ||
+            error.message === 'INVALID_REMEMBER_TOKEN') {
           clearAuth();
         }
         return false;
@@ -137,9 +155,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const initializeAuth = async () => {
       try {
+        console.log('🚀 Initializing authentication...');
         await checkAuth();
+        console.log('✅ Auth initialization complete');
       } catch (error) {
-        console.error('Auth initialization failed:', error);
+        console.error('❌ Auth initialization failed:', error);
       } finally {
         setIsLoading(false);
       }
@@ -164,6 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     
     if (!sessionCheckInterval.current) {
+      console.log('⏰ Starting session check interval');
       sessionCheckInterval.current = setInterval(() => {
         checkAuth().catch(() => {});
       }, SESSION_CHECK_INTERVAL);
@@ -181,6 +202,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     setError(null);
     
+    console.log('🔐 Login attempt with:', {
+      email,
+      rememberMe,
+      storedPreference: localStorage.getItem(REMEMBER_ME_KEY)
+    });
+    
     setRememberMe(rememberMe);
     
     if (loginTimeoutRef.current) {
@@ -192,6 +219,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     
     const timeoutPromise = new Promise<never>((_, reject) => {
       loginTimeoutRef.current = setTimeout(() => {
+        console.error('⏰ Login timeout');
         reject(new Error('LOGIN_TIMEOUT'));
       }, LOGIN_TIMEOUT);
     });
@@ -199,56 +227,59 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       api.utils.clearAuthCache();
       
-      // ✅ FIXED: API returns User directly, not wrapped
-      const user = await Promise.race([
+      const response = await Promise.race([
         api.auth.login({ email, password, rememberMe }),
         timeoutPromise
-      ]) as User;
+      ]) as LoginResponse;
       
       if (loginTimeoutRef.current) {
         clearTimeout(loginTimeoutRef.current);
         loginTimeoutRef.current = undefined;
       }
       
-      // Get remember token separately if needed
-      let rememberToken: string | undefined;
-      if (rememberMe) {
-        try {
-          const tokenResponse = await api.auth.refreshRememberToken();
-          rememberToken = tokenResponse.rememberToken;
-          localStorage.setItem(REMEMBER_TOKEN_KEY, rememberToken);
-        } catch (error) {
-          console.warn('Could not get remember token:', error);
-        }
-      } else {
+      console.log('✅ Login API response received:', {
+        message: response.message,
+        hasRememberToken: !!response.rememberToken,
+        rememberTokenLength: response.rememberToken?.length
+      });
+      
+      const user = response.user;
+      const rememberToken = response.rememberToken;
+      
+      if (rememberMe && rememberToken && rememberToken.length === 36) {
+        localStorage.setItem(REMEMBER_TOKEN_KEY, rememberToken);
+        console.log('✅ Remember token stored in localStorage');
+      } else if (!rememberMe) {
         localStorage.removeItem(REMEMBER_TOKEN_KEY);
+        console.log('✅ Remember token cleared (rememberMe = false)');
+      } else {
+        console.warn('⚠️ No valid remember token received despite rememberMe = true');
       }
       
       const authVerified = await checkAuth();
       
       if (!authVerified) {
+        console.error('❌ Session not established after login');
         shouldRestoreSession = true;
         throw new Error('SESSION_NOT_ESTABLISHED');
       }
       
-      // ✅ Return properly typed response
-      const response: LoginResponse = {
-        user,
-        rememberToken
-      };
-      
+      console.log('✅ Login successful');
       return response;
+      
     } catch (error: any) {
       if (loginTimeoutRef.current) {
         clearTimeout(loginTimeoutRef.current);
         loginTimeoutRef.current = undefined;
       }
       
+      console.error('❌ Login error:', error.message);
       localStorage.removeItem(REMEMBER_TOKEN_KEY);
       
       if (shouldRestoreSession && originalAuthState.isAuthenticated && originalAuthState.user) {
         setUser(originalAuthState.user);
         setIsAuthenticated(true);
+        console.log('🔄 Restored previous session');
       } else if (error.message === 'SESSION_NOT_ESTABLISHED') {
         clearAuth();
       }
@@ -303,13 +334,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error('INVALID_EMAIL');
       }
       
-      // ✅ FIXED: API returns User directly, not wrapped
-      const user = await api.auth.register(data) as User;
-      
-      // ✅ Create proper response type
-      const response: RegisterResponse = {
-        user
-      };
+      const response = await api.auth.register(data) as RegisterResponse;
       
       const isNowAuthenticated = await checkAuth();
       
@@ -344,14 +369,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async (): Promise<void> => {
     setIsLoading(true);
+    console.log('🚪 Logging out...');
     
     try {
       await api.auth.logout();
+      console.log('✅ Logout API call successful');
     } catch (error) {
-      console.error('Logout API call failed:', error);
+      console.error('❌ Logout API call failed:', error);
     } finally {
       clearAuth();
       setIsLoading(false);
+      console.log('✅ Logout complete');
     }
   };
 
@@ -361,6 +389,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handleAuthError = (event: Event) => {
       const customEvent = event as CustomEvent;
       if (customEvent.detail?.error === 'SESSION_EXPIRED') {
+        console.log('🔐 Session expired event received');
         clearAuth();
         setError('Your session has expired. Please log in again.');
       }

@@ -27,6 +27,7 @@ export interface User {
   role: 'user' | 'admin';
   createdAt: string;
   updatedAt: string;
+  phone?: string;
 }
 
 export interface Inquiry {
@@ -341,6 +342,29 @@ interface RequestMetrics {
 
 const requestMetrics: RequestMetrics[] = [];
 
+async function fetchCsrfToken(): Promise<string | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/csrf-token`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (data.csrfToken) {
+        updateCsrfToken(data.csrfToken);
+        return data.csrfToken;
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to fetch CSRF token:', error);
+  }
+  return null;
+}
+
 export async function apiRequest<T = unknown>(
   endpoint: string, 
   options: RequestOptions = {}
@@ -351,7 +375,7 @@ export async function apiRequest<T = unknown>(
     retries = 2,
     externalApi,
     externalEndpoint,
-    timeout = 10000,
+    timeout = 15000,
     requiresAuth = false,
     cacheTags = [],
     retryFresh = false,
@@ -382,9 +406,8 @@ export async function apiRequest<T = unknown>(
     success: false
   };
 
-  if (method !== 'GET') {
-    const userKey = getCookie('sessionId') || 
-                    getCookie('userId') || 
+  if (method !== 'GET' && !externalApi) {
+    const userKey = getCookie('dt_session_id') || 
                     getOrCreateClientId();
     
     if (!apiRateLimiter.canMakeRequest(userKey)) {
@@ -415,7 +438,7 @@ export async function apiRequest<T = unknown>(
       requestMetrics.push(metric);
       
       if (import.meta.env.DEV) {
-        console.debug(`Cache hit: ${effectiveCacheKey.substring(0, 50)}...`);
+        console.debug(`✅ Cache hit: ${effectiveCacheKey.substring(0, 50)}...`);
       }
       
       return cached.data as T;
@@ -434,7 +457,10 @@ export async function apiRequest<T = unknown>(
       };
 
       if (!externalApi && method !== 'GET') {
-        const token = getCsrfToken();
+        let token = getCsrfToken();
+        if (!token && endpoint !== '/auth/login' && endpoint !== '/auth/register') {
+          token = await fetchCsrfToken();
+        }
         if (token) {
           (defaultOptions.headers as Record<string, string>)['X-CSRF-Token'] = token;
         }
@@ -482,7 +508,11 @@ export async function apiRequest<T = unknown>(
           }
 
           if (response.status === 403) {
-            throw new ApiError('Access forbidden', 'FORBIDDEN', 403);
+            const errorData = await response.json().catch(() => ({}));
+            if (errorData.code === 'CSRF_ERROR') {
+              updateCsrfToken('');
+            }
+            throw new ApiError(errorData.error || 'Access forbidden', 'FORBIDDEN', 403);
           }
 
           if (response.status === 404) {
@@ -567,6 +597,10 @@ export async function apiRequest<T = unknown>(
           metric.duration = metric.endTime - metric.startTime;
           metric.size = new Blob([JSON.stringify(data || '')]).size;
           
+          if (import.meta.env.DEV) {
+            console.debug(`✅ ${method} ${endpoint} - ${response.status} (${metric.duration}ms)`);
+          }
+          
           return data as T;
         } catch (error) {
           clearTimeout(timeoutId);
@@ -584,6 +618,10 @@ export async function apiRequest<T = unknown>(
             }
           } else {
             lastError = new ApiError('Unknown error occurred', 'NETWORK_ERROR');
+          }
+          
+          if (import.meta.env.DEV) {
+            console.error(`❌ ${method} ${endpoint} attempt ${attempt + 1}/${retries + 1}:`, lastError.message);
           }
           
           if (attempt < retries) {
@@ -630,6 +668,7 @@ interface IndustrialProduct {
   category: string;
   price: number;
   thumbnail?: string;
+  images?: string[];
 }
 
 export const externalApi = {
@@ -645,7 +684,8 @@ export const externalApi = {
         externalEndpoint: endpoint,
         useCache: true,
         cacheKey: `external:industrial_${category || 'all'}_${limit}`,
-        cacheTags: ['external', 'products']
+        cacheTags: ['external', 'products'],
+        timeout: 10000,
       });
       
       return data?.products || [];
@@ -665,13 +705,15 @@ export const externalApi = {
         externalApi: 'PRODUCTS',
         useCache: true,
         cacheKey: `external:suggestions_${query}`,
-        cacheTags: ['external', 'suggestions']
+        cacheTags: ['external', 'suggestions'],
+        timeout: 10000,
       });
       
       const suggestions = Array.isArray(data) 
         ? data
             .filter((product) => 
-              product.title.toLowerCase().includes(query.toLowerCase())
+              product.title.toLowerCase().includes(query.toLowerCase()) ||
+              product.category.toLowerCase().includes(query.toLowerCase())
             )
             .slice(0, limit)
             .map((product) => ({
@@ -703,19 +745,22 @@ export const apiUtils = {
     }
     
     if (import.meta.env.DEV) {
-      console.debug(`Cache cleared${key ? ` for key: ${key}` : ''}`);
+      console.debug(`🧹 Cache cleared${key ? ` for key: ${key}` : ''}`);
     }
   },
 
   clearAuthCache: () => {
-    Array.from(cache.keys()).forEach(key => {
-      if (key.includes('user') || key.includes('inquiries') || key.includes('auth')) {
-        cache.delete(key);
+    const keysToDelete: string[] = [];
+    cache.forEach((_, key) => {
+      if (key.includes('user') || key.includes('inquiries') || key.includes('auth') || key.includes('profile')) {
+        keysToDelete.push(key);
       }
     });
     
+    keysToDelete.forEach(key => cache.delete(key));
+    
     if (import.meta.env.DEV) {
-      console.debug('Auth cache cleared');
+      console.debug('🔐 Auth cache cleared');
     }
   },
 
@@ -757,7 +802,8 @@ export const apiUtils = {
     const promises = endpoints.map(endpoint => 
       apiRequest(endpoint, { 
         useCache: true,
-        cacheTags: ['preloaded']
+        cacheTags: ['preloaded'],
+        timeout: 5000,
       }).catch(() => null)
     );
     return Promise.all(promises);
@@ -774,7 +820,7 @@ export const apiUtils = {
     });
     
     if (import.meta.env.DEV) {
-      console.debug(`Invalidated ${count} cache entries by tags: ${tags.join(', ')}`);
+      console.debug(`🗑️ Invalidated ${count} cache entries by tags: ${tags.join(', ')}`);
     }
   },
 
@@ -809,61 +855,100 @@ export const apiUtils = {
   },
 
   getRateLimiterStats: () => apiRateLimiter.getStats(),
+
+  refreshCsrfToken: async (): Promise<string | null> => {
+    return fetchCsrfToken();
+  },
+
+  setCsrfToken: (token: string) => {
+    updateCsrfToken(token);
+  },
+
+  getCsrfToken: () => csrfToken,
 };
 
 export const api = {
   auth: {
-    register: (data: { email: string; password: string; name?: string }): Promise<User> => 
-      apiRequest<User>('/auth/register', {
+    register: (data: { name: string; email: string; password: string; phone?: string }): Promise<any> => 
+      apiRequest('/auth/register', {
         method: 'POST',
         body: JSON.stringify(data),
         useCache: false,
+        requiresAuth: false,
+        timeout: 15000,
       }),
-    login: (data: { email: string; password: string; rememberMe?: boolean }): Promise<User> => 
-      apiRequest<User>('/auth/login', {
+    
+    login: (data: { email: string; password: string; rememberMe?: boolean }): Promise<any> => 
+      apiRequest('/auth/login', {
         method: 'POST',
         body: JSON.stringify(data),
         useCache: false,
+        requiresAuth: false,
+        timeout: 15000,
       }),
-    logout: (): Promise<{ success: boolean }> => 
+    
+    logout: (): Promise<any> => 
       apiRequest('/auth/logout', { 
         method: 'POST',
         useCache: false,
+        requiresAuth: true,
+        timeout: 10000,
       }),
-    status: (params?: { rememberToken?: string }): Promise<{ authenticated: boolean; user?: User }> => {
+    
+    status: (params?: { rememberToken?: string }): Promise<any> => {
       const url = params?.rememberToken 
         ? `/auth/status?rememberToken=${encodeURIComponent(params.rememberToken)}`
         : '/auth/status';
+      
       return apiRequest(url, {
+        method: 'GET',
         useCache: false,
+        requiresAuth: false,
+        timeout: 10000,
       });
     },
-    forgotPassword: (email: string): Promise<{ success: boolean; message: string }> => 
+    
+    forgotPassword: (email: string): Promise<any> => 
       apiRequest('/auth/forgot-password', {
         method: 'POST',
         body: JSON.stringify({ email }),
         useCache: false,
+        requiresAuth: false,
+        timeout: 15000,
       }),
-    resetPassword: (data: { token: string; password: string }): Promise<{ success: boolean }> => 
+    
+    resetPassword: (data: { token: string; password: string }): Promise<any> => 
       apiRequest('/auth/reset-password', {
         method: 'POST',
         body: JSON.stringify(data),
         useCache: false,
+        requiresAuth: false,
+        timeout: 15000,
       }),
-    checkEmail: (email: string): Promise<{ available: boolean }> => 
+    
+    checkEmail: (email: string): Promise<any> => 
       apiRequest(`/auth/check-email?email=${encodeURIComponent(email)}`, {
+        method: 'GET',
         useCache: false,
+        requiresAuth: false,
+        timeout: 10000,
       }),
-    validatePassword: (password: string): Promise<{ valid: boolean; errors?: string[] }> => 
+    
+    validatePassword: (password: string): Promise<any> => 
       apiRequest('/auth/validate-password', {
         method: 'POST',
         body: JSON.stringify({ password }),
         useCache: false,
+        requiresAuth: false,
+        timeout: 10000,
       }),
-    refreshRememberToken: (): Promise<{ rememberToken: string }> => 
+    
+    refreshRememberToken: (): Promise<any> => 
       apiRequest('/auth/refresh-remember-token', {
         method: 'POST',
         useCache: false,
+        requiresAuth: true,
+        timeout: 10000,
       }),
   },
 
@@ -871,7 +956,8 @@ export const api = {
     getAll: async (): Promise<Product[]> => {
       try {
         const localData = await apiRequest<Product[]>('/products', {
-          cacheTags: ['products', 'all']
+          cacheTags: ['products', 'all'],
+          timeout: 10000,
         }).catch(() => null);
         
         if (localData && Array.isArray(localData) && localData.length > 0) {
@@ -883,8 +969,8 @@ export const api = {
           id: p.id.toString(),
           name: p.title,
           category: p.category,
-          image: p.thumbnail || '',
-          description: '',
+          image: p.thumbnail || (p.images && p.images[0]) || '',
+          description: p.title,
           price: p.price,
           external: true
         }));
@@ -892,10 +978,12 @@ export const api = {
         return [];
       }
     },
+    
     getByCategory: async (category: string): Promise<Product[]> => {
       try {
         const localData = await apiRequest<Product[]>(`/products/category/${category}`, {
-          cacheTags: ['products', 'category', category]
+          cacheTags: ['products', 'category', category],
+          timeout: 10000,
         }).catch(() => null);
         
         if (localData && Array.isArray(localData) && localData.length > 0) {
@@ -907,8 +995,8 @@ export const api = {
           id: p.id.toString(),
           name: p.title,
           category: p.category,
-          image: p.thumbnail || '',
-          description: '',
+          image: p.thumbnail || (p.images && p.images[0]) || '',
+          description: p.title,
           price: p.price,
           external: true
         }));
@@ -916,16 +1004,19 @@ export const api = {
         return [];
       }
     },
+    
     getById: async (id: string): Promise<Product | null> => {
       try {
         const data = await apiRequest<Product>(`/products/${id}`, {
-          cacheTags: ['products', 'single']
+          cacheTags: ['products', 'single', id],
+          timeout: 10000,
         });
         return data || null;
       } catch {
         return null;
       }
     },
+    
     search: async (params: { search?: string; category?: string }): Promise<Product[]> => {
       try {
         const query = new URLSearchParams();
@@ -934,7 +1025,8 @@ export const api = {
         const queryString = query.toString();
         
         const data = await apiRequest<Product[]>(`/products/search${queryString ? `?${queryString}` : ''}`, {
-          cacheTags: ['products', 'search', params.search || '', params.category || '']
+          cacheTags: ['products', 'search', params.search || '', params.category || ''],
+          timeout: 10000,
         });
         
         if ((!data || data.length === 0) && params.search) {
@@ -955,12 +1047,14 @@ export const api = {
         return [];
       }
     },
-    getSuggestions: async (query: string): Promise<Array<{ id: string; name: string; category: string; image: string; price: number }>> => {
+    
+    getSuggestions: async (query: string): Promise<any[]> => {
       try {
         if (!query || query.trim().length < 2) return [];
         
         const localSuggestions = await apiRequest<any[]>(`/products/search/suggestions?query=${encodeURIComponent(query)}`, {
-          cacheTags: ['products', 'suggestions']
+          cacheTags: ['products', 'suggestions', query],
+          timeout: 8000,
         }).catch(() => []);
         
         if (localSuggestions && localSuggestions.length > 0) {
@@ -972,20 +1066,24 @@ export const api = {
         return [];
       }
     },
+    
     getDiscounted: async (): Promise<Product[]> => {
       try {
         const data = await apiRequest<Product[]>('/products/discounted', {
-          cacheTags: ['products', 'discounted']
+          cacheTags: ['products', 'discounted'],
+          timeout: 10000,
         });
         return data || [];
       } catch {
         return [];
       }
     },
+    
     getPopular: async (): Promise<Product[]> => {
       try {
         const data = await apiRequest<Product[]>('/products/popular', {
-          cacheTags: ['products', 'popular']
+          cacheTags: ['products', 'popular'],
+          timeout: 10000,
         });
         return data || [];
       } catch {
@@ -995,19 +1093,22 @@ export const api = {
   },
 
   inquiries: {
-    create: (data: Omit<Inquiry, 'id' | 'createdAt' | 'updatedAt'>): Promise<Inquiry> => 
-      apiUtils.queueApiRequest<Inquiry>('/inquiries', {
+    create: (data: { name: string; email: string; phone?: string; subject: string; message: string }): Promise<any> => 
+      apiUtils.queueApiRequest('/inquiries', {
         method: 'POST',
         body: JSON.stringify(data),
         useCache: false,
-        requiresAuth: true,
-        invalidateTags: ['inquiries', 'user']
+        requiresAuth: false,
+        invalidateTags: ['inquiries', 'user'],
+        timeout: 15000,
       }),
-    getUserInquiries: async (): Promise<Inquiry[]> => {
+    
+    getUserInquiries: async (): Promise<any[]> => {
       try {
-        return await apiRequest<Inquiry[]>('/user/inquiries', {
+        return await apiRequest<any[]>('/user/inquiries', {
           requiresAuth: true,
-          cacheTags: ['inquiries', 'user']
+          cacheTags: ['inquiries', 'user'],
+          timeout: 10000,
         });
       } catch {
         return [];
@@ -1016,33 +1117,38 @@ export const api = {
   },
 
   users: {
-    getProfile: async (id: string): Promise<User | null> => {
+    getProfile: async (id: string): Promise<any> => {
       try {
-        return await apiRequest<User>(`/users/${id}`, {
+        return await apiRequest(`/users/${id}`, {
           requiresAuth: true,
-          cacheTags: ['users', 'profile']
+          cacheTags: ['users', 'profile', id],
+          timeout: 10000,
         });
       } catch {
         return null;
       }
     },
-    updateProfile: (id: string, data: Partial<User>): Promise<User> => 
-      apiUtils.queueApiRequest<User>(`/users/${id}`, {
+    
+    updateProfile: (id: string, data: { name?: string; phone?: string }): Promise<any> => 
+      apiUtils.queueApiRequest(`/users/${id}`, {
         method: 'PUT',
         body: JSON.stringify(data),
         useCache: false,
         requiresAuth: true,
-        invalidateTags: ['users', 'profile']
+        invalidateTags: ['users', 'profile'],
+        timeout: 15000,
       }),
   },
 
   external: externalApi,
+  
   utils: apiUtils,
 
-  health: async (): Promise<{ status: string; timestamp: string }> => {
+  health: async (): Promise<any> => {
     try {
-      return await apiRequest<{ status: string; timestamp: string }>('/health', {
-        cacheTags: ['system', 'health']
+      return await apiRequest('/health', {
+        cacheTags: ['system', 'health'],
+        timeout: 5000,
       });
     } catch {
       return {
@@ -1055,7 +1161,19 @@ export const api = {
   test: async (): Promise<any> => {
     try {
       return await apiRequest('/test', {
-        cacheTags: ['system', 'test']
+        cacheTags: ['system', 'test'],
+        timeout: 5000,
+      });
+    } catch {
+      return null;
+    }
+  },
+
+  csrf: async (): Promise<any> => {
+    try {
+      return await apiRequest('/csrf-token', {
+        cacheTags: ['system', 'csrf'],
+        timeout: 5000,
       });
     } catch {
       return null;
@@ -1090,8 +1208,16 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
     requestQueue: () => Array.from(requestQueue.entries()),
     environment: getEnvironmentPrefix(),
     clientId: getOrCreateClientId(),
-    csrfToken: getCsrfToken(),
+    csrfToken: apiUtils.getCsrfToken(),
+    refreshCsrfToken: () => apiUtils.refreshCsrfToken(),
+    setCsrfToken: (token: string) => apiUtils.setCsrfToken(token),
     cleanupCache,
+    api: {
+      auth: api.auth,
+      products: api.products,
+      health: api.health,
+      test: api.test,
+    },
   };
   
   console.log('🔧 API Debug tools available at window.__API_DEBUG');
