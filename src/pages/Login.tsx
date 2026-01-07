@@ -77,7 +77,7 @@ const Login = () => {
         duration: 3000,
       });
       
-      const from = location.state?.from || '/dashboard';
+      const from = location.state?.from || '/index';
       navigate(from, { replace: true });
     } catch (err: any) {
       console.error('Login error details:', err);
